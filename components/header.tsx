@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { Menu, X } from "lucide-react"
 import { useState } from "react"
+import { ThemeToggle } from "./theme-toggle"
 
 export function Header() {
   const [isOpen, setIsOpen] = useState(false)
@@ -33,6 +34,7 @@ export function Header() {
 
         {/* CTA Buttons */}
         <div className="hidden md:flex items-center gap-3">
+          <ThemeToggle />
           {/* Connect Wallet button  */}
           <button
             onClick={() => alert("Connect Wallet")}
@@ -68,6 +70,9 @@ export function Header() {
 
 
             <div className="pt-3 border-t border-border/50 space-y-2">
+              <div className="flex items-center justify-center">
+                <ThemeToggle />
+              </div>
               {/* Connect Wallet button  */}
               <button
                 onClick={() => alert("Connect Wallet")}
