@@ -106,47 +106,130 @@ Stellar enables AnonChat to remain lightweight, scalable, and censorship-resista
 
 
 
+## 🏛️ Architecture
+
+AnonChat is built with a modern, scalable architecture:
+
+* **Frontend**: Next.js 16 with React 19, TypeScript, and Tailwind CSS
+* **Authentication**: Supabase Auth with Web3 wallet integration
+* **Database**: Supabase (PostgreSQL) for user profiles and chat data
+* **Real-time**: Supabase Realtime for instant messaging
+* **Styling**: Tailwind CSS with Radix UI components
+* **Deployment**: Vercel for frontend hosting
+
+### Project Structure
+
+```
+AnonChat/
+├── app/                    # Next.js App Router
+│   ├── api/               # API routes
+│   ├── auth/              # Authentication pages
+│   ├── chat/              # Chat interface
+│   ├── layout.tsx         # Root layout
+│   └── page.tsx           # Landing page
+├── components/            # React components
+├── lib/                   # Utility functions
+│   └── supabase/         # Supabase client setup
+├── scripts/              # Database migration scripts
+│   ├── 001_create_profiles.sql
+│   └── 002_create_profile_trigger.sql
+├── public/               # Static assets
+└── styles/               # Global styles
+```
+
+---
+
 ## 🛠️ Installation & Setup
 
 ### Prerequisites
 
-* Node.js >= 18
-* npm / yarn / pnpm
-* Stellar-compatible wallet
+Before you begin, ensure you have the following installed:
 
-### Clone the Repository
+* **Node.js** >= 18.x
+* **pnpm** (recommended) or npm/yarn
+* A **Supabase account** (free tier works)
+* A **Stellar-compatible wallet** (for testing)
+
+### Step 1: Clone the Repository
 
 ```bash
 git clone https://github.com/your-username/anonchat.git
-cd anonchat
+cd AnonChat
 ```
 
-### Install Dependencies
+### Step 2: Install Dependencies
+
+We recommend using **pnpm** for faster installs:
+
+```bash
+pnpm install
+```
+
+Or with npm:
 
 ```bash
 npm install
 ```
 
-### Environment Variables
+### Step 3: Supabase Setup
 
-Create a `.env.local` file:
+1. **Create a Supabase project** at [supabase.com](https://supabase.com)
+2. **Run database migrations**:
+   - Go to your Supabase project dashboard
+   - Navigate to SQL Editor
+   - Run the SQL scripts in order:
+     - `scripts/001_create_profiles.sql`
+     - `scripts/002_create_profile_trigger.sql`
+
+### Step 4: Environment Variables
+
+Create a `.env.local` file in the root directory:
 
 ```env
+# Supabase Configuration
+NEXT_PUBLIC_SUPABASE_URL=your-project-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+
+# Stellar Configuration
 NEXT_PUBLIC_STELLAR_NETWORK=testnet
 NEXT_PUBLIC_APP_NAME=AnonChat
 ```
 
-### Run Locally
+**Where to find Supabase credentials:**
+- Go to your Supabase project settings
+- Navigate to **API** section
+- Copy the **Project URL** and **anon/public key**
+
+### Step 5: Run Development Server
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
-App will be available at:
+The app will be available at:
 
 ```
 http://localhost:3000
 ```
+
+### Troubleshooting
+
+**Issue**: `Module not found` errors
+- **Solution**: Delete `node_modules` and lock files, then reinstall:
+  ```bash
+  rm -rf node_modules pnpm-lock.yaml
+  pnpm install
+  ```
+
+**Issue**: Supabase connection errors
+- **Solution**: Verify your `.env.local` has correct credentials
+- Check if your Supabase project is active
+
+**Issue**: Build failures
+- **Solution**: Ensure Node.js version >= 18.x:
+  ```bash
+  node --version
+  ```
 
 ---
 
@@ -162,12 +245,24 @@ http://localhost:3000
 
 ## 🤝 Contributing
 
-Contributions are welcome!
+We welcome contributions from the community! Please read our [CONTRIBUTING.md](CONTRIBUTING.md) guide for detailed instructions on:
 
-1. Fork the repo
-2. Create a feature branch
-3. Commit changes
-4. Open a pull request
+* Setting up your development environment
+* Code style and standards
+* Branching strategy
+* Submitting pull requests
+* Issue guidelines
+
+**Quick Start:**
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b fix-[issue-number]`
+3. Make your changes following our code standards
+4. Test your changes locally
+5. Commit with clear messages: `git commit -m "Fix: [description]"`
+6. Push and open a pull request
+
+**Important**: Only create a pull request if you were assigned to the issue.
 
 ---
 
