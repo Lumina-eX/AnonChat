@@ -34,9 +34,11 @@ export function Header() {
         {/* CTA Buttons */}
         <div className="hidden md:flex items-center gap-3">
           <button className="px-4 py-2 text-sm rounded-lg hover:bg-muted transition-colors">Sign In</button>
-          <button className="px-6 py-2 text-sm rounded-lg bg-gradient-to-r from-primary to-accent text-primary-foreground font-semibold hover:opacity-90 transition-opacity">
-            Join Now
-          </button>
+          <Link href="/chat">
+            <button className="px-6 py-2 text-sm rounded-lg bg-gradient-to-r from-primary to-accent text-primary-foreground font-semibold hover:opacity-90 transition-opacity">
+              Join Now
+            </button>
+          </Link>
         </div>
 
         {/* Mobile Menu Button */}
