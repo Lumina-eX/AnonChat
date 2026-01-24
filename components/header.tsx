@@ -39,6 +39,13 @@ export function Header() {
               Join Now
             </button>
           </Link>
+          {/* Connect Wallet button  */}
+          <button
+            onClick={() => alert("Connect Wallet")}
+            aria-label="Connect Wallet"
+            className="w-full cursor-pointer px-4 py-2 text-sm rounded-lg bg-gradient-to-r from-primary to-accent text-primary-foreground font-semibold">
+            Connect Wallet
+          </button>
         </div>
 
         {/* Mobile Menu Button */}
@@ -63,10 +70,16 @@ export function Header() {
             <Link href="#community" className="block text-sm hover:text-primary transition-colors">
               Community
             </Link>
+
+
+
             <div className="pt-3 border-t border-border/50 space-y-2">
-              <button className="w-full px-4 py-2 text-sm rounded-lg hover:bg-muted transition-colors">Sign In</button>
-              <button className="w-full px-4 py-2 text-sm rounded-lg bg-gradient-to-r from-primary to-accent text-primary-foreground font-semibold">
-                Join Now
+              {/* Connect Wallet button  */}
+              <button
+                onClick={() => alert("Connect Wallet")}
+                aria-label="Connect Wallet"
+                className="w-full cursor-pointer px-4 py-2 text-sm rounded-lg bg-gradient-to-r from-primary to-accent text-primary-foreground font-semibold">
+                Connect Wallet
               </button>
             </div>
           </div>

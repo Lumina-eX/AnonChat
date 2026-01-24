@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import Image from "next/image"
 
 export function Footer() {
   return (
@@ -9,10 +10,13 @@ export function Footer() {
         <div className="grid md:grid-cols-4 gap-8 mb-8">
           {/* Brand */}
           <div>
-            <Link href="/" className="flex items-center gap-2 mb-4">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center">
-                <span className="text-primary-foreground font-bold text-sm">⚫</span>
-              </div>
+            <Link href="/" className="flex items-center gap-1 mb-4">
+             <Image
+                        src="/anonchat-logo.webp"
+                        alt="AnonChat Logo"
+                        width={32}
+                        height={32}
+                      />
               <span className="text-lg font-bold gradient-text">AnonChat</span>
             </Link>
             <p className="text-sm text-muted-foreground">Secure anonymous communication for free minds.</p>

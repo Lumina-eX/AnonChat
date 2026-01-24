@@ -1,26 +1,17 @@
-<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <style>
-    @media (prefers-color-scheme: light) {
-      .background { fill: black; }
-      .foreground { fill: white; }
-    }
-    @media (prefers-color-scheme: dark) {
-      .background { fill: white; }
-      .foreground { fill: black; }
-    }
-  </style>
-  <g clip-path="url(#clip0_7960_43945)">
-    <rect class="background" width="180" height="180" rx="37" />
-    <g style="transform: scale(95%); transform-origin: center">
-      <path class="foreground"
-        d="M101.141 53H136.632C151.023 53 162.689 64.6662 162.689 79.0573V112.904H148.112V79.0573C148.112 78.7105 148.098 78.3662 148.072 78.0251L112.581 112.898C112.701 112.902 112.821 112.904 112.941 112.904H148.112V126.672H112.941C98.5504 126.672 86.5638 114.891 86.5638 100.5V66.7434H101.141V100.5C101.141 101.15 101.191 101.792 101.289 102.422L137.56 66.7816C137.255 66.7563 136.945 66.7434 136.632 66.7434H101.141V53Z" />
-      <path class="foreground"
-        d="M65.2926 124.136L14 66.7372H34.6355L64.7495 100.436V66.7372H80.1365V118.47C80.1365 126.278 70.4953 129.958 65.2926 124.136Z" />
-    </g>
-  </g>
+<svg width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <clipPath id="clip0_7960_43945">
-      <rect width="180" height="180" fill="white" />
-    </clipPath>
+    <linearGradient id="anonchatGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#a855f7"></stop>
+      <stop offset="50%" stop-color="#6366f1"></stop>
+      <stop offset="100%" stop-color="#ec4899"></stop>
+    </linearGradient>
   </defs>
+
+  <path d="M28 6C15.85 6 6 14.73 6 25.5c0 6.35 3.7 12 9.4 15.6L13 50l8.8-4.8
+       c2.4.6 4.8.9 7.2.9
+       12.15 0 22-8.73 22-19.5S40.15 6 28 6Z" fill="url(#anonchatGradient)"></path>
+
+  <circle cx="28" cy="26" r="8" fill="#0a0a0a"></circle>
+
+  <ellipse cx="28" cy="26" rx="18" ry="9" stroke="white" stroke-opacity="0.6" stroke-width="1.2" transform="rotate(-15 28 26)"></ellipse>
 </svg>
