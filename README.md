@@ -106,47 +106,88 @@ Stellar enables AnonChat to remain lightweight, scalable, and censorship-resista
 
 
 
-## 🛠️ Installation & Setup
+## 🏛️ Architecture
+
+```mermaid
+flowchart TB
+    subgraph Client["👤 Client"]
+        Wallet[Web3 Wallet]
+        Browser[Browser]
+    end
+
+    subgraph Frontend["⚛️ Frontend (Next.js)"]
+        UI[React Components]
+        Auth[Auth Module]
+        Chat[Chat Interface]
+    end
+
+    subgraph Backend["🔧 Backend Services"]
+        Supabase[(Supabase)]
+        Realtime[Realtime Engine]
+    end
+
+    subgraph Blockchain["⭐ Stellar"]
+        StellarNet[Stellar Network]
+    end
+
+    Wallet -->|Sign Auth| Auth
+    Browser --> UI
+    UI --> Chat
+    Auth -->|Verify| Supabase
+    Chat -->|Messages| Realtime
+    Realtime -->|Sync| Supabase
+    Auth -.->|Wallet Auth| StellarNet
+```
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS |
+| Auth | Supabase Auth + Web3 Wallet |
+| Database | Supabase (PostgreSQL) |
+| Real-time | Supabase Realtime |
+| Blockchain | Stellar Network |
+| Hosting | Vercel |
+
+---
+
+## 🛠️ Quick Start
 
 ### Prerequisites
 
-* Node.js >= 18
-* npm / yarn / pnpm
-* Stellar-compatible wallet
+* Node.js >= 18.x
+* pnpm (recommended)
+* [Supabase account](https://supabase.com)
 
-### Clone the Repository
+### Setup
 
 ```bash
+# 1. Clone and install
 git clone https://github.com/your-username/anonchat.git
-cd anonchat
-```
+cd AnonChat
+pnpm install
 
-### Install Dependencies
+# 2. Configure environment
+cp .env.example .env.local
+# Edit .env.local with your Supabase credentials
 
-```bash
-npm install
+# 3. Run database migrations in Supabase SQL Editor
+# scripts/001_create_profiles.sql
+# scripts/002_create_profile_trigger.sql
+
+# 4. Start dev server
+pnpm dev
 ```
 
 ### Environment Variables
 
-Create a `.env.local` file:
-
 ```env
+NEXT_PUBLIC_SUPABASE_URL=your-project-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 NEXT_PUBLIC_STELLAR_NETWORK=testnet
 NEXT_PUBLIC_APP_NAME=AnonChat
 ```
 
-### Run Locally
-
-```bash
-npm run dev
-```
-
-App will be available at:
-
-```
-http://localhost:3000
-```
+> Find credentials in Supabase Dashboard → Settings → API
 
 ---
 
@@ -162,12 +203,10 @@ http://localhost:3000
 
 ## 🤝 Contributing
 
-Contributions are welcome!
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Quick steps:
 
-1. Fork the repo
-2. Create a feature branch
-3. Commit changes
-4. Open a pull request
+1. Fork → Create branch `fix-[issue-number]` → Make changes → Test → PR
+2. **Important**: Only submit PRs for issues you're assigned to
 
 ---
 

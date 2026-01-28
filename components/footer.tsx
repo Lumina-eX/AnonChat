@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import Image from "next/image"
+import { ExternalLink } from "./external-link"
 
 export function Footer() {
   return (
@@ -114,9 +115,13 @@ export function Footer() {
             <Link href="#" className="text-muted-foreground hover:text-primary transition-colors text-sm">
               Discord
             </Link>
-            <Link href="#" className="text-muted-foreground hover:text-primary transition-colors text-sm">
-              GitHub
-            </Link>
+
+            <ExternalLink
+              className="text-muted-foreground hover:text-primary transition-colors text-sm"
+              href="https://github.com/Lumina-eX/AnonChat"
+            >
+                GitHub
+            </ExternalLink>
           </div>
         </div>
       </div>
