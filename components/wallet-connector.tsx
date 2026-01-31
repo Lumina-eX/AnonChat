@@ -2,6 +2,7 @@
 
 import { connect, disconnect, getPublicKey } from "@/app/stellar-wallet-kit";
 import { useEffect, useState } from "react";
+import toast from "react-hot-toast";
 
 export default function ConnectWallet() {
   const [publicKey, setPublicKey] = useState<string | null>(null);
@@ -11,6 +12,11 @@ export default function ConnectWallet() {
     const key = await getPublicKey();
     if (key) {
       setPublicKey(key);
+
+      {/* Wallet connection toast */}
+      toast.success("Wallet connected successfully",{
+         duration:2000
+      });
     } else {
       setPublicKey(null);
     }
@@ -20,6 +26,11 @@ export default function ConnectWallet() {
   async function showDisconnected() {
     setPublicKey(null);
     setLoading(false);
+     {/* Wallet disconnection toast */}
+    toast("Wallet disconnected successfully", {
+      icon: "🔌",
+      duration:2000
+    });
   }
 
   useEffect(() => {
@@ -55,7 +66,6 @@ export default function ConnectWallet() {
         <>
           <button
             onClick={() => connect(showConnected)}
-            // className=" text-white px-6 py-2 rounded-lg transition font-medium"
             className="bg-gradient-to-r from-primary to-accent p-2 rounded-2xl px-8"
           >
             Connect
