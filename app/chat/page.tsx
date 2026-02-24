@@ -9,16 +9,9 @@ import {
   type PresenceStatus,
 } from "@/components/presence-indicator";
 import ConnectWallet from "@/components/wallet-connector";
+import { RoomMembersDialog } from "@/components/room-members-dialog";
 import { cn } from "@/lib/utils";
-import { useEffect, useMemo, useState } from "react"
-import Image from "next/image"
-import { Header } from "@/components/header"
-import { Footer } from "@/components/footer"
-import { PresenceIndicator, type PresenceStatus } from "@/components/presence-indicator"
-import ConnectWallet from "@/components/wallet-connector"
-import { RoomMembersDialog } from "@/components/room-members-dialog"
-import { cn } from "@/lib/utils"
-import { getPublicKey, onDisconnect } from "@/app/stellar-wallet-kit"
+import { getPublicKey, onDisconnect } from "@/app/stellar-wallet-kit";
 import {
   Search,
   MessageCircle,
@@ -33,11 +26,11 @@ import {
   MoreVertical,
   Paperclip,
   Smile,
-} from "lucide-react";
   Star,
-} from "lucide-react"
-import { calculateReputation, trackActivity } from "@/lib/reputation"
-import { CONFIG } from "@/lib/config"
+} from "lucide-react";
+import { calculateReputation, trackActivity } from "@/lib/reputation";
+import { CONFIG } from "@/lib/config";
+import { createClient } from "@/lib/supabase/client";
 
 type ChatPreview = {
   id: string;
@@ -62,205 +55,154 @@ type ChatMessage = {
 export default function ChatPage() {
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [messageText, setMessageText] = useState("");
+  const [inputMessage, setInputMessage] = useState("");
+  const [roomMembersOpen, setRoomMembersOpen] = useState(false);
 
+  // Wallet
   const [walletConnected, setWalletConnected] = useState(false);
+  const [currentPublicKey, setCurrentPublicKey] = useState<string | null>(null);
+  const [reputationScore, setReputationScore] = useState(0);
+
+  // Backend Integration
+  const [userId, setUserId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chats, setChats] = useState<ChatPreview[]>([]);
+  const supabase = createClient();
 
   useEffect(() => {
-    const el = document.getElementById("connect-wrap");
-    if (!el) return;
+    async function getUser() {
+      const { data } = await supabase.auth.getUser();
+      if (data?.user) setUserId(data.user.id);
+    }
+    getUser();
+  }, [supabase.auth]);
 
-    const observer = new MutationObserver(() => {
-      const hasAddress = el.textContent && el.textContent.includes("...");
-      setWalletConnected(Boolean(hasAddress));
-    });
-
-    observer.observe(el, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
-    return () => observer.disconnect();
+  // Fetch rooms
+  useEffect(() => {
+    async function loadRooms() {
+      try {
+        const res = await fetch("/api/rooms");
+        if (res.ok) {
+          const data = await res.json();
+          const formattedRooms = data.rooms.map((r: any) => ({
+            id: r.id,
+            name: r.name,
+            address: r.created_by,
+            lastMessage: r.description || "Start chatting",
+            lastSeen: new Date(r.created_at).toLocaleDateString(),
+            unreadCount: 0,
+            status: "online" as PresenceStatus,
+          }));
+          setChats(formattedRooms);
+        }
+      } catch (err) {
+        console.error("Failed to load rooms:", err);
+      }
+    }
+    loadRooms();
   }, []);
-  const [selectedChatId, setSelectedChatId] = useState<string | null>(null)
-  const [query, setQuery] = useState("")
-  const [inputMessage, setInputMessage] = useState("")
-  const [roomMembersOpen, setRoomMembersOpen] = useState(false)
 
-  const [walletConnected, setWalletConnected] = useState(false)
-  const [currentPublicKey, setCurrentPublicKey] = useState<string | null>(null)
-  const [reputationScore, setReputationScore] = useState(0)
+  // Fetch messages + subscribe
+  useEffect(() => {
+    if (!selectedChatId) return;
 
-  const [messagesByChat, setMessagesByChat] = useState<Record<string, ChatMessage[]>>({
-    "1": [
-      {
-        id: "m1",
-        author: "them",
-        text: "Hey, welcome to AnonChat 👋",
-        time: "14:20",
-        delivered: true,
-        read: true,
-      },
-      {
-        id: "m2",
-        author: "me",
-        text: "Love how clean this feels on desktop.",
-        time: "14:22",
-        delivered: false,
-        read: false,
-        status: "sending",
-      },
-      {
-        id: "m2b",
-        author: "me",
-        text: "Just sent another update.",
-        time: "14:23",
-        delivered: false,
-        read: false,
-        status: "sent",
-      },
-      {
-        id: "m2c",
-        author: "me",
-        text: "Let me know once it lands.",
-        time: "14:24",
-        delivered: true,
-        read: false,
-        status: "delivered",
-      },
-      {
-        id: "m2d",
-        author: "me",
-        text: "Seen it?",
-        time: "14:24",
-        delivered: true,
-        read: true,
-        status: "read",
-      },
-      {
-        id: "m3",
-        author: "them",
-        text: "Messages stay end‑to‑end encrypted here.",
-        time: "14:25",
-        delivered: true,
-        read: false,
-      },
-    ],
-    "2": [
-      {
-        id: "m4",
-        author: "them",
-        text: "New governance draft is live.",
-        time: "09:02",
-        delivered: true,
-        read: true,
-      },
-    ],
-    "3": [
-      {
-        id: "m5",
-        author: "me",
-        text: "Let’s catch up on the drop.",
-        time: "17:40",
-        delivered: true,
-        read: true,
-      },
-    ],
-  })
+    setMessages([]);
+
+    async function loadMessages() {
+      try {
+        const res = await fetch(`/api/messages?room_id=${selectedChatId}`);
+        if (res.ok) {
+          const data = await res.json();
+          const formatted = (data.messages || [])
+            .map((m: any) => ({
+              id: m.id,
+              author: m.user_id === userId ? "me" : "them",
+              text: m.content,
+              time: new Date(m.created_at).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+              }),
+              delivered: true,
+              read: true,
+              status: "read",
+            }))
+            .reverse();
+          setMessages(formatted);
+        }
+      } catch (error) {
+        console.error("Failed to fetch messages:", error);
+      }
+    }
+    loadMessages();
+
+    const channel = supabase
+      .channel(`room:${selectedChatId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+          filter: `room_id=eq.${selectedChatId}`,
+        },
+        (payload) => {
+          const m = payload.new;
+          const newMessage: ChatMessage = {
+            id: m.id,
+            author: m.user_id === userId ? "me" : "them",
+            text: m.content,
+            time: new Date(m.created_at).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            }),
+            delivered: true,
+            read: true,
+            status: "read",
+          };
+          setMessages((prev) => [...prev, newMessage]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedChatId, userId, supabase]);
 
   // Update reputation score
   useEffect(() => {
     const updateScore = () => {
-      setReputationScore(calculateReputation(currentPublicKey))
-    }
-    updateScore()
-    window.addEventListener("reputationUpdate", updateScore)
-    return () => window.removeEventListener("reputationUpdate", updateScore)
-  }, [currentPublicKey])
+      setReputationScore(calculateReputation(currentPublicKey));
+    };
+    updateScore();
+    window.addEventListener("reputationUpdate", updateScore);
+    return () => window.removeEventListener("reputationUpdate", updateScore);
+  }, [currentPublicKey]);
 
   // Sync wallet state properly
   useEffect(() => {
     const checkWallet = async () => {
-      const address = await getPublicKey()
-      setWalletConnected(!!address)
-      checkWallet()
+      const address = await getPublicKey();
+      setWalletConnected(!!address);
+      setCurrentPublicKey(address);
+    };
+    checkWallet();
 
-      // Listen for disconnects
-      const unsubscribe = onDisconnect(() => {
-        setWalletConnected(false)
-        setCurrentPublicKey(null)
-      })
+    // Listen for disconnects
+    const unsubscribe = onDisconnect(() => {
+      setWalletConnected(false);
+      setCurrentPublicKey(null);
+    });
 
-      // Heuristic: Check on interval or simple event as well since kit doesn't have onConnect yet
-      const interval = setInterval(checkWallet, 1000)
+    const interval = setInterval(checkWallet, 1000);
 
-  const initialChats: ChatPreview[] = useMemo(
-    () => [
-      {
-        id: "1",
-        name: "Anon Whisper",
-        address: "GABC...1234",
-        lastMessage: "Got your message, will reply soon.",
-        lastSeen: "Today • 14:32",
-        unreadCount: 2,
-        status: "online",
-      },
-      {
-        id: "2",
-        name: "Room #xf23",
-        address: "GCDE...5678",
-        lastMessage: "Pinned the latest proposal for review.",
-        lastSeen: "Today • 09:10",
-        unreadCount: 0,
-        status: "recently_active",
-      },
-      {
-        id: "3",
-        name: "Collector",
-        address: "GHJK...9012",
-        lastMessage: "Let’s sync tomorrow.",
-        lastSeen: "Yesterday • 18:04",
-        unreadCount: 0,
-        status: "offline",
-      },
-    ],
-    [],
-  );
-      return () => {
-        unsubscribe()
-        clearInterval(interval)
-      }
-    }}, [])
-
-  const [chats, setChats] = useState<ChatPreview[]>([
-    {
-      id: "1",
-      name: "Anon Whisper",
-      address: "GABC ... 1234",
-      lastMessage: "Got your message, will reply soon.",
-      lastSeen: "Today • 14:32",
-      unreadCount: 2,
-      status: "online",
-    },
-    {
-      id: "2",
-      name: "Room #xf23",
-      address: "GCDE ... 5678",
-      lastMessage: "Pinned the latest proposal for review.",
-      lastSeen: "Today • 09:10",
-      unreadCount: 0,
-      status: "recently_active",
-    },
-    {
-      id: "3",
-      name: "Collector",
-      address: "GHJK ... 9012",
-      lastMessage: "Let’s sync tomorrow.",
-      lastSeen: "Yesterday • 18:04",
-      unreadCount: 0,
-      status: "offline",
-    },
-  ]);
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
+  }, []);
 
   const markRoomRead = async (roomId: string) => {
     try {
@@ -268,143 +210,88 @@ export default function ChatPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ roomId }),
-      })
+      });
     } catch (err) {
-      console.error("Failed to mark room read", err)
+      console.error("Failed to mark room read", err);
     }
-  }
+  };
 
   const handleSelectChat = async (id: string) => {
-    setSelectedChatId(id)
-    // update server and local unread count
-    await markRoomRead(id)
-    setChats((prev) => prev.map((c) => (c.id === id ? { ...c, unreadCount: 0 } : c)))
-  }
+    setSelectedChatId(id);
+    await markRoomRead(id);
+    setChats((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, unreadCount: 0 } : c))
+    );
+  };
 
-  const messagesByChat: Record<string, ChatMessage[]> = useMemo(
-    () => ({
-      "1": [
-        {
-          id: "m1",
-          author: "them",
-          text: "Hey, welcome to AnonChat 👋",
-          time: "14:20",
-          delivered: true,
-          read: true,
-        },
-        {
-          id: "m2",
-          author: "me",
-          text: "Love how clean this feels on desktop.",
-          time: "14:22",
-          delivered: false,
-          read: false,
-          status: "sending",
-        },
-        {
-          id: "m2b",
-          author: "me",
-          text: "Just sent another update.",
-          time: "14:23",
-          delivered: false,
-          read: false,
-          status: "sent",
-        },
-        {
-          id: "m2c",
-          author: "me",
-          text: "Let me know once it lands.",
-          time: "14:24",
-          delivered: true,
-          read: false,
-          status: "delivered",
-        },
-        {
-          id: "m2d",
-          author: "me",
-          text: "Seen it?",
-          time: "14:24",
-          delivered: true,
-          read: true,
-          status: "read",
-        },
-        {
-          id: "m3",
-          author: "them",
-          text: "Messages stay end‑to‑end encrypted here.",
-          time: "14:25",
-          delivered: true,
-          read: false,
-        },
-      ],
-      "2": [
-        {
-          id: "m4",
-          author: "them",
-          text: "New governance draft is live.",
-          time: "09:02",
-          delivered: true,
-          read: true,
-        },
-      ],
-      "3": [
-        {
-          id: "m5",
-          author: "me",
-          text: "Let’s catch up on the drop.",
-          time: "17:40",
-          delivered: true,
-          read: true,
-        },
-      ],
-    }),
-    [],
-  );
   // Listen for new room creation
   useEffect(() => {
     const handleRoomCreated = (e: any) => {
-      const newRoom = e.detail
-      setChats(prev => [newRoom, ...prev])
-      setSelectedChatId(newRoom.id)
-    }
-    window.addEventListener("roomCreated", handleRoomCreated)
-    return () => window.removeEventListener("roomCreated", handleRoomCreated)
-  }, [])
+      const newRoom = e.detail;
+      setChats((prev) => [newRoom, ...prev]);
+      setSelectedChatId(newRoom.id);
+    };
+    window.addEventListener("roomCreated", handleRoomCreated);
+    return () => window.removeEventListener("roomCreated", handleRoomCreated);
+  }, []);
 
-  const handleSendMessage = () => {
-    if (!inputMessage.trim() || !selectedChatId) return
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim() || !selectedChatId) return;
 
-    const newMessage: ChatMessage = {
-      id: `m${Date.now()}`,
+    const content = inputMessage;
+    setInputMessage("");
+
+    // Optimistically add to messages
+    const fakeId = "temp-" + Date.now();
+    const tempMsg: ChatMessage = {
+      id: fakeId,
       author: "me",
-      text: inputMessage,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+      text: content,
+      time: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }),
       delivered: false,
       read: false,
-      status: "sent"
+      status: "sending",
+    };
+    setMessages((prev) => [...prev, tempMsg]);
+
+    try {
+      await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room_id: selectedChatId, content }),
+      });
+
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.id === selectedChatId
+            ? { ...chat, lastMessage: content, lastSeen: "Just now", unreadCount: 0 }
+            : chat
+        )
+      );
+
+      // We rely on Supabase subscription to stream back the actual message
+      setMessages((prev) => prev.filter((m) => m.id !== fakeId));
+
+      trackActivity(currentPublicKey, "message");
+    } catch (err) {
+      console.error("Failed to send message:", err);
+      // Mark as failed visually
+      setMessages((prev) =>
+        prev.map((m) => (m.id === fakeId ? { ...m, status: "sent" } : m))
+      );
     }
-
-    setMessagesByChat(prev => ({
-      ...prev,
-      [selectedChatId]: [...(prev[selectedChatId] || []), newMessage]
-    }))
-
-    setChats(prev => prev.map(chat =>
-      chat.id === selectedChatId
-        ? { ...chat, lastMessage: inputMessage, lastSeen: "Just now", unreadCount: 0 }
-        : chat
-    ))
-
-    setInputMessage("")
-    trackActivity(currentPublicKey, 'message')
-  }
+  };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      handleSendMessage()
+      e.preventDefault();
+      void handleSendMessage();
     }
-  }
+  };
 
   const getDeliveryStatus = (message: ChatMessage) => {
     if (message.status) return message.status;
@@ -418,14 +305,13 @@ export default function ChatPage() {
     const q = query.toLowerCase();
     return chats.filter(
       (c) =>
-        c.name.toLowerCase().includes(q) || c.address.toLowerCase().includes(q),
+        c.name.toLowerCase().includes(q) || c.address.toLowerCase().includes(q)
     );
   }, [chats, query]);
 
   const selectedChat = selectedChatId
-    ? (chats.find((c) => c.id === selectedChatId) ?? null)
+    ? chats.find((c) => c.id === selectedChatId) ?? null
     : null;
-  const messages = selectedChat ? (messagesByChat[selectedChat.id] ?? []) : [];
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -433,12 +319,10 @@ export default function ChatPage() {
 
       <main className="flex-1 pt-24 pb-8 px-2 sm:px-4 lg:px-8 flex justify-center">
         <div className="w-full max-w-6xl h-[min(82vh,760px)] bg-card border border-border/60 rounded-2xl shadow-lg overflow-hidden flex">
-          {/* Sidebar */}
+
+          {/* WhatsApp-Style Dark Sidebar */}
           <aside className="w-[340px] border-r border-border/60 bg-[#0a0a10] flex flex-col">
             <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between gap-3 bg-[#0f0f16]">
-          <aside className="w-[340px] border-r border-border/60 bg-card flex flex-col">
-            {/* Sidebar header */}
-            <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between gap-3 bg-card">
               <div className="flex items-center gap-2">
                 <div className="relative h-8 w-8 rounded-xl overflow-hidden bg-primary/10 flex items-center justify-center">
                   <Image
@@ -474,13 +358,18 @@ export default function ChatPage() {
                       CONNECTED
                     </span>
                     <span className="text-[11px] font-mono text-foreground">
-                      {currentPublicKey ? `${currentPublicKey.slice(0, 4)} ... ${currentPublicKey.slice(-4)}` : "None"}
+                      {currentPublicKey
+                        ? `${currentPublicKey.slice(0, 4)} ... ${currentPublicKey.slice(-4)}`
+                        : "None"}
                     </span>
                   </div>
                 </div>
 
                 {CONFIG.EXPERIMENTAL_REPUTATION_ENABLED && (
-                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-primary/10 border border-primary/20" title="Reputation Score (Experimental)">
+                  <div
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-primary/10 border border-primary/20"
+                    title="Reputation Score (Experimental)"
+                  >
                     <Star className="h-3 w-3 text-primary fill-primary" />
                     <span className="text-[11px] font-bold text-primary">
                       {reputationScore}
@@ -496,8 +385,6 @@ export default function ChatPage() {
             )}
 
             <div className="px-4 pt-3 pb-2 space-y-2 border-b border-border/60 bg-[#11111a]">
-            {/* Search + chats header */}
-            <div className="px-4 pt-3 pb-2 space-y-2 border-b border-border/60 bg-card">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span className="font-semibold tracking-wide uppercase text-foreground">
                   Messages
@@ -511,7 +398,6 @@ export default function ChatPage() {
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search ENS or Wallet"
                   className="w-full pl-9 pr-3 py-2 rounded-xl bg-[#181822] text-sm border border-border/60 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 placeholder:text-muted-foreground/70 transition"
-                  className="w-full pl-9 pr-3 py-2 rounded-xl bg-card text-sm border border-border/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:border-primary/60 placeholder:text-muted-foreground/70 transition"
                 />
               </div>
             </div>
@@ -523,29 +409,16 @@ export default function ChatPage() {
                 </div>
               ) : (
                 <ul className="py-1">
-                  {filteredChats.map((chat) => (
-                    <li key={chat.id}>
-                      <button
-                        onClick={() => setSelectedChatId(chat.id)}
-                        className={cn(
-                          "w-full px-3.5 py-2.5 flex gap-3 items-center text-left hover:bg-[#181824] transition",
-                          chat.id === selectedChatId &&
-                            "bg-[#19192a] border-l-2 border-primary/80",
-                        )}
-                      >
-                        <div className="relative">
-                          <div className="h-9 w-9 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-xs font-semibold text-white">
-                            {chat.name.charAt(0).toUpperCase()}
                   {filteredChats.map((chat) => {
-                    const isSelected = chat.id === selectedChatId
+                    const isSelected = chat.id === selectedChatId;
                     return (
                       <li key={chat.id}>
                         <button
                           onClick={() => void handleSelectChat(chat.id)}
                           className={cn(
-                            "w-full px-3.5 py-2.5 flex gap-3 items-center text-left hover:bg-muted/10 transition cursor-pointer",
+                            "w-full px-3.5 py-2.5 flex gap-3 items-center text-left hover:bg-[#181824] transition",
                             isSelected &&
-                            "bg-primary/5 border-l-2 border-primary/80 shadow-[0_0_0_1px_rgba(168,85,247,0.08)]",
+                            "bg-[#19192a] border-l-2 border-primary/80"
                           )}
                         >
                           <div className="relative">
@@ -557,38 +430,30 @@ export default function ChatPage() {
                               className="absolute -bottom-0.5 -right-0.5 scale-90"
                             />
                           </div>
-                          <PresenceIndicator
-                            status={chat.status}
-                            className="absolute -bottom-0.5 -right-0.5 scale-90"
-                          />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-sm font-medium truncate">
-                              {chat.name}
-                            </span>
-                            <span className="text-[11px] text-muted-foreground">
-                              {chat.lastSeen}
-                            </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm font-medium truncate">
+                                {chat.name}
+                              </span>
+                              <span className="text-[11px] text-muted-foreground">
+                                {chat.lastSeen}
+                              </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {chat.lastMessage}
+                            </p>
                           </div>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {chat.lastMessage}
-                          </p>
-                        </div>
-                      </button>
-                    </li>
-                  ))}
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
 
+            {/* Hidden wallet connector just to mirror status into chat UI */}
             <div className="px-4 py-2 border-t border-border/60 bg-[#0f0f16] text-[11px] text-muted-foreground flex items-center justify-between gap-2">
               <span className="truncate">Wallet status for this device:</span>
-            {/* Hidden wallet connector just to mirror status into chat UI */}
-            <div className="px-4 py-2 border-t border-border/60 bg-card text-[11px] text-muted-foreground flex items-center justify-between gap-2">
-              <span className="truncate">
-                Wallet status for this device:
-              </span>
               <ConnectWallet />
             </div>
           </aside>
@@ -596,9 +461,6 @@ export default function ChatPage() {
           {/* Main chat area */}
           <section className="flex-1 flex flex-col bg-[#050509]">
             {!selectedChat ? (
-          <section className="flex-1 flex flex-col bg-background">
-            {/* Empty state when no chat selected */}
-            {!selectedChat && (
               <div className="flex flex-1 flex-col items-center justify-center text-center px-8 gap-4">
                 <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl bg-primary/10 text-primary border border-primary/20">
                   <MessageCircle className="h-8 w-8" />
@@ -607,33 +469,19 @@ export default function ChatPage() {
                   Open a chat to get started
                 </h2>
                 <p className="text-sm text-muted-foreground max-w-md">
-                  Everything stays end‑to‑end encrypted.
+                  Just like WhatsApp on desktop, your conversations appear here
+                  once you pick a room from the left. Everything stays
+                  end‑to‑end encrypted.
                 </p>
-                <div className="space-y-1 max-w-md">
-                  <h2 className="text-xl font-semibold tracking-tight">
-                    Open a chat to get started
-                  </h2>
-                  <p className="text-sm text-muted-foreground">
-                    Just like WhatsApp on desktop, your conversations appear
-                    here once you pick a room from the left. Everything stays
-                    end‑to‑end encrypted.
-                  </p>
-                </div>
-                <button className="mt-2 inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium bg-background hover:bg-muted/60 transition cursor-pointer">
+                <button className="mt-2 inline-flex items-center gap-2 rounded-full border border-primary/60 px-4 py-2 text-sm font-medium bg-primary/10 text-primary hover:bg-primary/20 transition cursor-pointer">
                   <MessageCircle className="h-4 w-4" />
                   Create or join a room
                 </button>
               </div>
             ) : (
-            )}
-
-            {/* Conversation view */}
-            {selectedChat && (
               <>
                 {/* Header */}
                 <div className="px-6 py-3 border-b border-border/60 bg-[#0f0f16] flex items-center justify-between gap-4">
-                {/* Header with name + address */}
-                <div className="px-6 py-3 border-b border-border/60 bg-card flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="relative">
                       <div className="h-9 w-9 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-xs font-semibold text-white">
@@ -660,11 +508,24 @@ export default function ChatPage() {
                     <button className="h-9 w-9 flex items-center justify-center rounded-full hover:bg-[#181822]">
                       <Video className="h-4 w-4" />
                     </button>
-                    <button className="h-9 w-9 flex items-center justify-center rounded-full hover:bg-[#181822]">
-                      <MoreVertical className="h-4 w-4" />
-                    </button>
+
+                    <RoomMembersDialog
+                      roomId={selectedChat.id}
+                      open={roomMembersOpen}
+                      onOpenChange={setRoomMembersOpen}
+                      trigger={
+                        <button
+                          type="button"
+                          className="h-9 w-9 flex items-center justify-center rounded-full hover:bg-[#181822]"
+                          aria-label="Room members and voting"
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </button>
+                      }
+                    />
+
                     {walletConnected && (
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 ml-2">
                         {CONFIG.EXPERIMENTAL_REPUTATION_ENABLED && (
                           <div className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary">
                             <Star className="h-3 w-3 fill-primary" />
@@ -675,34 +536,13 @@ export default function ChatPage() {
                           <Wallet className="h-3.5 w-3.5 text-primary" />
                           <span>Wallet linked</span>
                         </div>
-
                       </div>
                     )}
-                    <button className="inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-muted/60 transition">
-                      <Phone className="h-4 w-4" />
-                    </button>
-                    <button className="inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-muted/60 transition">
-                      <Video className="h-4 w-4" />
-                    </button>
-                    <RoomMembersDialog
-                      roomId={selectedChat.id}
-                      open={roomMembersOpen}
-                      onOpenChange={setRoomMembersOpen}
-                      trigger={
-                        <button
-                          type="button"
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-muted/60 transition"
-                          aria-label="Room members and voting"
-                        >
-                          <MoreVertical className="h-4 w-4" />
-                        </button>
-                      }
-                    />
                   </div>
                 </div>
 
                 {/* Messages */}
-                <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3 bg-background">
+                <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3 bg-[#050509]">
                   {messages.map((message) => {
                     const isMine = message.author === "me";
                     const status = getDeliveryStatus(message);
@@ -711,17 +551,15 @@ export default function ChatPage() {
                         key={message.id}
                         className={cn(
                           "flex w-full",
-                          isMine ? "justify-end" : "justify-start",
+                          isMine ? "justify-end" : "justify-start"
                         )}
                       >
                         <div
                           className={cn(
                             "max-w-[70%] rounded-2xl px-4 py-2.5 text-sm flex flex-col gap-1",
                             isMine
-                              ? "bg-[#282834] rounded-br-md"
-                              : "bg-[#181822] border border-border/40 rounded-bl-md",
-                              ? "bg-primary/10 text-foreground rounded-br-md"
-                              : "bg-card text-foreground rounded-bl-md",
+                              ? "bg-[#282834] rounded-br-md text-foreground"
+                              : "bg-[#181822] border border-border/40 rounded-bl-md text-foreground"
                           )}
                         >
                           <span className="whitespace-pre-wrap break-words">
@@ -739,20 +577,10 @@ export default function ChatPage() {
                                   <CheckCheck
                                     className={cn(
                                       "h-3 w-3",
-                                      status === "read" && "text-green-400",
+                                      status === "read" && "text-green-400"
                                     )}
                                   />
                                 )}
-                                <span
-                                  className={cn(
-                                    status === "read" && "text-green-400",
-                                  )}
-                                >
-                                  {status === "read"
-                                    ? "Seen"
-                                    : status.charAt(0).toUpperCase() +
-                                      status.slice(1)}
-                                </span>
                               </span>
                             )}
                           </div>
@@ -762,9 +590,8 @@ export default function ChatPage() {
                   })}
                 </div>
 
-                {/* ENHANCED COMPOSER SECTION */}
+                {/* Enhanced Composer Section */}
                 <div className="px-4 sm:px-6 py-4 border-t border-border/60 bg-[#0f0f16] flex flex-col gap-3">
-                  {/* Branded Accessibility Label */}
                   <label
                     htmlFor="chat-input"
                     className="text-[10px] font-bold uppercase tracking-widest text-[#634fd1] ml-1 opacity-90"
@@ -781,8 +608,9 @@ export default function ChatPage() {
                       <input
                         id="chat-input"
                         type="text"
-                        value={messageText}
-                        onChange={(e) => setMessageText(e.target.value)}
+                        value={inputMessage}
+                        onChange={(e) => setInputMessage(e.target.value)}
+                        onKeyDown={handleKeyPress}
                         placeholder="Type a message..."
                         className="w-full rounded-xl border border-border/60 bg-[#181822] pl-4 pr-12 py-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-[#887cc9]/40 focus:border-[#887cc9] placeholder:text-muted-foreground/50 transition-all shadow-inner"
                       />
@@ -792,41 +620,21 @@ export default function ChatPage() {
                     </div>
 
                     <button
-                      onClick={() => {
-                        if (messageText.trim()) setMessageText("");
-                      }}
+                      onClick={() => void handleSendMessage()}
                       className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-[#634fd1] text-black hover:bg-[#887cc9] shadow-[0_0_15px_rgba(79,209,197,0.2)] transition-all active:scale-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={!messageText.trim()}
+                      disabled={!inputMessage.trim() || !selectedChatId}
                     >
                       <Send className="h-5 w-5" />
                     </button>
                   </div>
-                {/* Composer */}
-                <div className="px-4 sm:px-6 py-3 border-t border-border/60 bg-card flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
-                    onKeyDown={handleKeyPress}
-                    placeholder="Type a message"
-                    className="flex-1 rounded-full border border-border/60 bg-card px-4 py-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:border-primary/60 placeholder:text-muted-foreground/70"
-                  />
-                  <button
-                    onClick={handleSendMessage}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground hover:opacity-90 transition"
-                  >
-                    <Send className="h-4 w-4" />
-                  </button>
                 </div>
               </>
             )}
           </section>
         </div>
-      </main >
+      </main>
 
       <Footer />
     </div>
   );
-    </div >
-  )
 }
