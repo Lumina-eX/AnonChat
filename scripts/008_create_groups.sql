@@ -1,4 +1,4 @@
--- Create groups table for managing group data
+-- Create groups table an  for managing group data
 create table if not exists public.groups (
   id uuid primary key default gen_random_uuid(),
   name text not null,
