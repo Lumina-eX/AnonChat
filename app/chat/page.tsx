@@ -64,6 +64,7 @@ interface DBRoom {
   name: string;
   description?: string;
   created_at: string;
+  owner_wallet?: string;
   address?: string;
   unread_count?: number;
 }
@@ -207,7 +208,10 @@ export default function ChatPage() {
           const mappedRooms: ChatPreview[] = data.rooms.map((r: DBRoom) => ({
             id: r.id,
             name: r.name,
-            address: r.address || (r.id.slice(0, 8) + "..."),
+            // display the owner&apos;s wallet address if we have it
+            address: r.owner_wallet
+              ? `${r.owner_wallet.slice(0, 4)}...${r.owner_wallet.slice(-4)}`
+              : r.address || (r.id.slice(0, 8) + "..."),
             lastMessage: r.description || "No messages yet",
             lastSeen: new Date(r.created_at).toLocaleDateString(),
             unreadCount: r.unread_count || 0,

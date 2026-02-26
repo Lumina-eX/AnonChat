@@ -69,8 +69,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // Wallet login flow stores the wallet address in user metadata.  We
+    // require that the caller is authenticated with a wallet so we can tie
+    // group ownership to that address.  If no wallet address is present we
+    // reject the request.
+    const walletAddress =
+      (user.user_metadata as any)?.wallet_address as string | undefined;
+    if (!walletAddress) {
+      return NextResponse.json(
+        { error: "Wallet address not available for user" },
+        { status: 403 },
+      );
+    }
+
     const body = await request.json();
-    const { name, description, is_private, max_fee } = body;
+    const { name, description, is_private, max_fee, wallet_address } = body;
+
+    // if the client supplied a wallet_address make sure it matches the one we
+    // retrieved from the authenticated user; otherwise ignore.
+    if (wallet_address && wallet_address !== walletAddress) {
+      return NextResponse.json(
+        { error: "wallet_address mismatch" },
+        { status: 400 },
+      );
+    }
+
+    const wAddr = wallet_address || walletAddress;
 
     if (!name) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
@@ -79,7 +103,7 @@ export async function POST(request: NextRequest) {
     const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const createdAt = new Date().toISOString();
 
-    // Insert group into database first
+    // Insert group into database first (owner_wallet added)
     const { data, error } = await supabase
       .from("rooms")
       .insert({
@@ -88,6 +112,7 @@ export async function POST(request: NextRequest) {
         description,
         is_private: is_private || false,
         created_by: user.id,
+        owner_wallet: wAddr,
       })
       .select();
 
@@ -95,7 +120,7 @@ export async function POST(request: NextRequest) {
 
     const room = data[0];
 
-    // Prepare metadata for blockchain submission
+    // Prepare metadata for blockchain submission, include owner wallet
     const metadata: GroupMetadata = {
       id: room.id,
       name: room.name,
@@ -103,6 +128,7 @@ export async function POST(request: NextRequest) {
       created_by: room.created_by,
       created_at: room.created_at,
       is_private: room.is_private,
+      owner_wallet: room.owner_wallet,
     };
 
     // Compute metadata hash

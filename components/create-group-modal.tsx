@@ -67,6 +67,9 @@ export function CreateGroupModal() {
       toast.error("Please connect your wallet first");
       return;
     }
+    // we expect the Supabase session to be tied to the same wallet; if the
+    // user hasn't authenticated with our backend yet the POST call will
+    // return 401/403 and we simply display a generic error below.
 
     if (!groupName.trim()) {
       toast.error("Group name is required");
@@ -84,7 +87,8 @@ export function CreateGroupModal() {
           name: groupName,
           description: `Group created by ${publicKey.slice(0, 4)}...${publicKey.slice(-4)}`,
           is_private: false,
-          max_fee: networkFee
+          max_fee: networkFee,
+          wallet_address: publicKey,
         })
       });
 

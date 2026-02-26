@@ -7,6 +7,9 @@ export interface GroupMetadata {
   created_by: string;
   created_at: string;
   is_private: boolean;
+  // the Stellar wallet address that owns this group
+  // newer groups will always have a value here; existing records may be null
+  owner_wallet?: string | null;
 }
 
 export interface StellarTransactionResult {
@@ -30,6 +33,7 @@ export interface VerificationResponse {
   transactionHash: string | null;
   verified: boolean;
   explorerUrl: string | null;
+  owner_wallet?: string | null;
 }
 
 export interface GroupCreationResponse {
@@ -40,6 +44,7 @@ export interface GroupCreationResponse {
     is_private: boolean;
     created_by: string;
     created_at: string;
+    owner_wallet?: string | null;
     stellar_tx_hash: string | null;
     metadata_hash?: string | null;
     blockchain_submitted_at?: string | null;

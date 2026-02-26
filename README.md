@@ -13,6 +13,12 @@ AnonChat is a decentralized, privacy-first chat application where:
 * Users **connect using a Web3 wallet**
 * No personal data, email, or phone number is required
 * Users can **create or join anonymous groups**
+
+### On-Chain Group Ownership
+To improve security, each chat group is now tied to a specific Stellar wallet address. The wallet that creates a group becomes its owner, and only that wallet can change the group's metadata. When a new room is created the owner's address is saved in the database and included in the metadata hash that is submitted to the Stellar blockchain.
+
+Updates to a group's name, description or privacy flag must be accompanied by a signature from the owner's wallet. The backend verifies the signature against the proposed new metadata and rejects unauthorized requests. This provides transparent, on-chain proof of who controls a community.
+
 * Messages are **end-to-end encrypted**
 * Identity is never exposed — not even to us
 

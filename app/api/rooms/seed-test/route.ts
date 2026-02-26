@@ -16,6 +16,9 @@ export async function POST(request: NextRequest) {
 
     const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`
 
+    const walletAddress =
+      (user.user_metadata as any)?.wallet_address as string | undefined;
+
     const { data: room, error: roomError } = await supabase
       .from("rooms")
       .insert({
@@ -24,6 +27,7 @@ export async function POST(request: NextRequest) {
         description: "Seeded test room for quick joining",
         is_private: false,
         created_by: user.id,
+        owner_wallet: walletAddress || null,
       })
       .select()
 

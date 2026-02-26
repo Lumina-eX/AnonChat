@@ -40,6 +40,7 @@ export async function GET(
       created_by: room.created_by,
       created_at: room.created_at,
       is_private: room.is_private,
+      owner_wallet: room.owner_wallet ?? null,
     };
 
     // Compute current metadata hash
@@ -52,6 +53,7 @@ export async function GET(
         groupId: roomId,
         currentMetadataHash,
         storedTxHash: room.stellar_tx_hash,
+        ownerWallet: room.owner_wallet,
       },
       correlationId,
     );
@@ -65,6 +67,7 @@ export async function GET(
         transactionHash: null,
         verified: false,
         explorerUrl: null,
+        owner_wallet: room.owner_wallet ?? null,
       };
 
       return NextResponse.json(response);
@@ -91,6 +94,7 @@ export async function GET(
         transactionHash: room.stellar_tx_hash,
         verified: false,
         explorerUrl: getTransactionExplorerUrl(room.stellar_tx_hash),
+        owner_wallet: room.owner_wallet ?? null,
       };
 
       return NextResponse.json(response);
@@ -121,6 +125,7 @@ export async function GET(
       transactionHash: room.stellar_tx_hash,
       verified,
       explorerUrl: getTransactionExplorerUrl(room.stellar_tx_hash),
+      owner_wallet: room.owner_wallet ?? null,
     };
 
     return NextResponse.json(response);
