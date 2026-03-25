@@ -84,7 +84,8 @@ export function CreateGroupModal() {
           name: groupName,
           description: `Group created by ${publicKey.slice(0, 4)}...${publicKey.slice(-4)}`,
           is_private: false,
-          max_fee: networkFee
+          max_fee: networkFee,
+          owner_wallet: publicKey,
         })
       });
 

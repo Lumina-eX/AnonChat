@@ -17,6 +17,7 @@ import {
 import ConnectWallet from "@/components/wallet-connector";
 import { RoomMembersDialog } from "@/components/room-members-dialog";
 import { ChatEmptyState } from "@/components/chat-empty-state";
+import { EditGroupDialog } from "@/components/edit-group-dialog";
 import { cn } from "@/lib/utils";
 import { getPublicKey, onDisconnect } from "@/app/stellar-wallet-kit";
 import {
@@ -70,6 +71,8 @@ interface DBRoom {
   name: string;
   description?: string;
   created_at: string;
+  is_private?: boolean;
+  owner_wallet?: string | null;
   address?: string;
   unread_count?: number;
 }
@@ -100,6 +103,7 @@ export default function ChatPage() {
   const [messagesByChat, setMessagesByChat] = useState<
     Record<string, ChatMessage[]>
   >({});
+  const [dbRooms, setDbRooms] = useState<DBRoom[]>([]);
   const [chats, setChats] = useState<ChatPreview[]>([]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -116,6 +120,40 @@ export default function ChatPage() {
       setCurrentUser(user);
     };
     fetchUser();
+  }, []);
+
+  /* ---------------- Fetch Rooms ---------------- */
+
+  useEffect(() => {
+    const fetchRooms = async () => {
+      try {
+        const res = await fetch("/api/rooms");
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error ?? "Failed to fetch rooms");
+        }
+
+        const rooms = (data.rooms ?? []) as DBRoom[];
+        setDbRooms(rooms);
+        setChats(
+          rooms.map((room) => ({
+            id: room.id,
+            name: room.name,
+            address: room.owner_wallet
+              ? `${room.owner_wallet.slice(0, 4)}...${room.owner_wallet.slice(-4)}`
+              : "Unknown",
+            lastMessage: room.description ?? "No messages yet",
+            lastSeen: new Date(room.created_at).toLocaleDateString(),
+            unreadCount: room.unread_count ?? 0,
+            status: "offline" as PresenceStatus,
+          })),
+        );
+      } catch (error) {
+        console.error("Failed to fetch rooms:", error);
+      }
+    };
+
+    fetchRooms();
   }, []);
 
   /* ---------------- Transform DB Message ---------------- */
@@ -290,6 +328,13 @@ export default function ChatPage() {
     : null;
 
   const messages = selectedChat ? (messagesByChat[selectedChat.id] ?? []) : [];
+  const selectedRoom = selectedChatId
+    ? (dbRooms.find((room) => room.id === selectedChatId) ?? null)
+    : null;
+  const canEditSelectedRoom =
+    !!selectedRoom?.owner_wallet &&
+    !!currentPublicKey &&
+    selectedRoom.owner_wallet.toUpperCase() === currentPublicKey.toUpperCase();
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -318,8 +363,35 @@ export default function ChatPage() {
 
             {selectedChat && (
               <>
-                <div className="p-4 border-b font-semibold">
-                  {selectedChat.name}
+                <div className="flex items-center justify-between gap-4 border-b p-4">
+                  <div>
+                    <div className="font-semibold">{selectedChat.name}</div>
+                    {selectedRoom?.description && (
+                      <div className="text-sm text-muted-foreground">
+                        {selectedRoom.description}
+                      </div>
+                    )}
+                  </div>
+                  {selectedRoom && (
+                    <EditGroupDialog
+                      room={selectedRoom}
+                      canEdit={canEditSelectedRoom}
+                      onUpdated={(updatedRoom) => {
+                        setDbRooms((prev) =>
+                          prev.map((room) =>
+                            room.id === updatedRoom.id ? { ...room, ...updatedRoom } : room,
+                          ),
+                        );
+                        setChats((prev) =>
+                          prev.map((chat) =>
+                            chat.id === updatedRoom.id
+                              ? { ...chat, name: updatedRoom.name }
+                              : chat,
+                          ),
+                        );
+                      }}
+                    />
+                  )}
                 </div>
 
                 <div
