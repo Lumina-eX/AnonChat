@@ -1,6 +1,7 @@
 import WebSocket, { WebSocketServer } from "ws"
 import http from "http"
 import { randomUUID } from "crypto"
+import { logSystemEvent } from "@/lib/logging"
 
 // Type definitions
 interface User {
@@ -109,7 +110,7 @@ export function createWebSocketServer(port: number = 3001) {
     const connection: ClientConnection = { ws }
 
     clients.set(clientId, connection)
-    console.log(`[WebSocket] Client connected: ${clientId}`)
+    logSystemEvent("info", "client_connected", { clientId })
 
     // Send connection established message
     ws.send(
@@ -127,6 +128,11 @@ export function createWebSocketServer(port: number = 3001) {
       try {
         const message = JSON.parse(data.toString())
         console.log(`[WebSocket] Message from ${clientId}:`, message.type)
+        logSystemEvent("info", "websocket_message_received", {
+          eventType: "websocket_message_received",
+          clientId,
+          messageType: message.type,
+        })
 
         switch (message.type) {
           case "auth": {
@@ -150,6 +156,11 @@ export function createWebSocketServer(port: number = 3001) {
                 status: "online",
               },
               timestamp: Date.now(),
+            })
+            logSystemEvent("info", "user_authenticated", {
+              eventType: "user_authenticated",
+              userId: message.payload.userId,
+              clientId,
             })
             break
           }
@@ -289,10 +300,18 @@ export function createWebSocketServer(port: number = 3001) {
             break
 
           default:
-            console.log(`[WebSocket] Unknown message type: ${message.type}`)
+            logSystemEvent("warn", "unknown_message_type", {
+              eventType: "unknown_message_type",
+              clientId,
+              messageType: message.type,
+            })
         }
       } catch (error) {
-        console.error("[WebSocket] Error processing message:", error)
+        logSystemEvent("error", "error_processing_message", {
+          eventType: "error_processing_message",
+          clientId,
+          error: error instanceof Error ? error.message : String(error),
+        })
         ws.send(
           JSON.stringify({
             type: "error",
@@ -304,22 +323,35 @@ export function createWebSocketServer(port: number = 3001) {
     })
 
     ws.on("pong", () => {
-      console.log(`[WebSocket] Pong from ${clientId}`)
+      logSystemEvent("info", "pong_received", {
+        eventType: "pong_received",
+        clientId,
+      })
     })
 
     ws.on("close", () => {
-      console.log(`[WebSocket] Client disconnected: ${clientId}`)
+      logSystemEvent("info", "client_disconnected", {
+        eventType: "client_disconnected",
+        clientId,
+      })
       cleanupClient(clientId)
     })
 
     ws.on("error", (error) => {
-      console.error(`[WebSocket] Error for ${clientId}:`, error)
+      logSystemEvent("error", "client_error", {
+        eventType: "client_error",
+        clientId,
+        error: error instanceof Error ? error.message : String(error),
+      })
       cleanupClient(clientId)
     })
   })
 
   server.listen(port, () => {
-    console.log(`[WebSocket Server] Running on ws://localhost:${port}`)
+    logSystemEvent("info", "websocket_server_started", {
+      eventType: "websocket_server_started",
+      port,
+    })
   })
 
   return { server, wss }
