@@ -69,7 +69,7 @@ type ChatMessage = {
 interface DBRoom {
   id: string;
   name: string;
-  description?: string;
+  description?: string | null;
   created_at: string;
   is_private?: boolean;
   owner_wallet?: string | null;
