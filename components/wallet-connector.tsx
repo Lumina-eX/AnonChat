@@ -9,6 +9,7 @@ import {
 import { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
 import { createClient } from "@/lib/supabase/client";
+import { WalletAddress } from "@/components/wallet-address";
 
 export default function ConnectWallet() {
   const [publicKey, setPublicKey] = useState<string | null>(null);
@@ -134,7 +135,11 @@ export default function ConnectWallet() {
             className="ellipsis bg-linear-to-r from-primary to-accent p-2 rounded-2xl"
             title={publicKey}
           >
-            {publicKey.slice(0, 4)}...{publicKey.slice(-4)}
+            <WalletAddress
+              address={publicKey}
+              className="max-w-[8.5rem]"
+              addressClassName="text-primary-foreground"
+            />
           </div>
           <button
             className="bg-linear-to-r from-primary/50 to-accent/70 p-2 rounded-xl h-10 px-4 self-center"

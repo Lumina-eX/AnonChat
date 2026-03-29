@@ -1,70 +1,45 @@
-"use client"
+"use client";
 
-import React, {
-  useEffect,
-  useMemo,
-  useState,
-  useCallback,
-  useRef,
-} from "react";
-import Image from "next/image";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
-import {
-  PresenceIndicator,
-  type PresenceStatus,
-} from "@/components/presence-indicator";
-import ConnectWallet from "@/components/wallet-connector";
-import { RoomMembersDialog } from "@/components/room-members-dialog";
 import { ChatEmptyState } from "@/components/chat-empty-state";
 import { EditGroupDialog } from "@/components/edit-group-dialog";
-import { cn } from "@/lib/utils";
+import { PresenceIndicator, type PresenceStatus } from "@/components/presence-indicator";
+import { RoomMembersDialog } from "@/components/room-members-dialog";
+import ConnectWallet from "@/components/wallet-connector";
 import { getPublicKey, onDisconnect } from "@/app/stellar-wallet-kit";
+import { cn } from "@/lib/utils";
 import {
-  Search,
-  MessageCircle,
-  Send,
-  Check,
-  CheckCheck,
-  Clock,
-  Wallet,
-  Share2,
-  Phone,
-  Video,
-  MoreVertical,
-  Star,
+  ArrowLeft,
   Loader2,
+  Menu,
+  MessageSquare,
+  Paperclip,
+  PanelLeft,
+  Search,
+  SendHorizontal,
+  Smile,
+  Users,
 } from "lucide-react";
-import { calculateReputation, trackActivity } from "@/lib/reputation";
-import { CONFIG } from "@/lib/config";
-import {
-  useRealtimeChat,
-  TypingIndicatorComponent,
-  useDebouncedTyping,
-  type TypingIndicator,
-} from "@/lib/websocket/chat-hooks";
-import { useWebSocketSend, useWebSocketMessage } from "@/lib/websocket/hooks";
-import { WebSocketMessage } from "@/types/websocket";
 
 type ChatPreview = {
-  id: string
-  name: string
-  address: string
-  lastMessage: string
-  lastSeen: string
-  unreadCount: number
-  status: PresenceStatus
-}
+  id: string;
+  name: string;
+  address: string;
+  lastMessage: string;
+  lastSeen: string;
+  unreadCount: number;
+  status: PresenceStatus;
+};
 
 type ChatMessage = {
-  id: string
-  author: "me" | "them"
-  text: string
-  time: string
-  delivered: boolean
-  read: boolean
-  status?: "sending" | "sent" | "delivered" | "read"
-}
+  id: string;
+  author: "me" | "them";
+  text: string;
+  time: string;
+  status: "sending" | "sent" | "delivered" | "read";
+};
 
 interface DBRoom {
   id: string;
@@ -85,353 +60,696 @@ interface DBMessage {
 }
 
 export default function ChatPage() {
-  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState("");
-  const [walletConnected, setWalletConnected] = useState(false);
   const [roomMembersOpen, setRoomMembersOpen] = useState(false);
-  const [currentPublicKey, setCurrentPublicKey] = useState<string | null>(null);
-  const [reputationScore, setReputationScore] = useState(0);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [activeMobileTab, setActiveMobileTab] = useState<"chats" | "conversation">(
+    "conversation",
+  );
 
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<{ id: string } | null>(null);
+  const [currentPublicKey, setCurrentPublicKey] = useState<string | null>(null);
+  const [isLoadingRooms, setIsLoadingRooms] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [hasMoreMessages, setHasMoreMessages] = useState<
-    Record<string, boolean>
-  >({});
-  const [offsets, setOffsets] = useState<Record<string, number>>({});
-  const [messagesByChat, setMessagesByChat] = useState<
-    Record<string, ChatMessage[]>
-  >({});
+  const [isSending, setIsSending] = useState(false);
+
   const [dbRooms, setDbRooms] = useState<DBRoom[]>([]);
   const [chats, setChats] = useState<ChatPreview[]>([]);
+  const [messagesByChat, setMessagesByChat] = useState<Record<string, ChatMessage[]>>({});
+  const [memberCountByRoom, setMemberCountByRoom] = useState<Record<string, number>>({});
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  /* ---------------- Fetch Current User ---------------- */
-
-  useEffect(() => {
-    const fetchUser = async () => {
-      const { createClient } = await import("@/lib/supabase/client");
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      setCurrentUser(user);
-    };
-    fetchUser();
-  }, []);
-
-  /* ---------------- Fetch Rooms ---------------- */
-
-  useEffect(() => {
-    const fetchRooms = async () => {
-      try {
-        const res = await fetch("/api/rooms");
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error ?? "Failed to fetch rooms");
-        }
-
-        const rooms = (data.rooms ?? []) as DBRoom[];
-        setDbRooms(rooms);
-        setChats(
-          rooms.map((room) => ({
-            id: room.id,
-            name: room.name,
-            address: room.owner_wallet
-              ? `${room.owner_wallet.slice(0, 4)}...${room.owner_wallet.slice(-4)}`
-              : "Unknown",
-            lastMessage: room.description ?? "No messages yet",
-            lastSeen: new Date(room.created_at).toLocaleDateString(),
-            unreadCount: room.unread_count ?? 0,
-            status: "offline" as PresenceStatus,
-          })),
-        );
-      } catch (error) {
-        console.error("Failed to fetch rooms:", error);
-      }
-    };
-
-    fetchRooms();
-  }, []);
-
-  /* ---------------- Transform DB Message ---------------- */
-
   const transformToChatMessage = useCallback(
-    (msg: DBMessage): ChatMessage => {
-      const time = new Date(msg.created_at).toLocaleTimeString([], {
+    (message: DBMessage): ChatMessage => ({
+      id: message.id,
+      author: message.user_id === currentUser?.id ? "me" : "them",
+      text: message.content,
+      time: new Date(message.created_at).toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
-      });
+      }),
+      status: "read",
+    }),
+    [currentUser?.id],
+  );
+
+  const fetchCurrentUser = useCallback(async () => {
+    const { createClient } = await import("@/lib/supabase/client");
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    setCurrentUser(user ? { id: user.id } : null);
+  }, []);
+
+  const fetchRoomLastMessagePreview = useCallback(async (roomId: string) => {
+    try {
+      const response = await fetch(
+        `/api/messages?room_id=${encodeURIComponent(roomId)}&limit=1&offset=0`,
+      );
+      if (!response.ok) {
+        return {
+          lastMessage: "No messages yet",
+          lastSeen: "",
+        };
+      }
+
+      const data = await response.json();
+      const latest: DBMessage | undefined = data.messages?.[0];
+      if (!latest) {
+        return {
+          lastMessage: "No messages yet",
+          lastSeen: "",
+        };
+      }
 
       return {
-        id: msg.id,
-        author: msg.user_id === currentUser?.id ? "me" : "them",
-        text: msg.content,
-        time,
-        delivered: true,
-        read: true,
-        status: "read",
+        lastMessage: latest.content,
+        lastSeen: new Date(latest.created_at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }),
       };
-    },
-    [currentUser],
-  );
+    } catch {
+      return {
+        lastMessage: "No messages yet",
+        lastSeen: "",
+      };
+    }
+  }, []);
 
-  /* ---------------- Fetch Historical Messages ---------------- */
+  const fetchRooms = useCallback(async () => {
+    setIsLoadingRooms(true);
+    try {
+      const response = await fetch("/api/rooms");
+      const data = await response.json();
+      if (!response.ok || data.error) {
+        throw new Error(data.error || "Failed to fetch rooms");
+      }
 
-  const fetchHistoricalMessages = useCallback(
-    async (roomId: string, isLoadMore = false) => {
-      if ((isLoadMore && isLoadingMore) || (!isLoadMore && isLoadingMessages))
-        return;
+      const rawRooms: DBRoom[] = data.rooms || [];
+      setDbRooms(rawRooms);
 
-      const limit = 20;
-      const currentOffset = isLoadMore ? offsets[roomId] || 0 : 0;
+      const previews = await Promise.all(
+        rawRooms.map(async (room) => {
+          const preview = await fetchRoomLastMessagePreview(room.id);
+          const fallbackAddress = room.owner_wallet
+            ? `${room.owner_wallet.slice(0, 4)}...${room.owner_wallet.slice(-4)}`
+            : room.address || room.id;
 
-      isLoadMore ? setIsLoadingMore(true) : setIsLoadingMessages(true);
+          return {
+            id: room.id,
+            name: room.name,
+            address: fallbackAddress,
+            unreadCount: room.unread_count || 0,
+            status: (room.unread_count || 0) > 0 ? "online" : "recently_active",
+            lastMessage: preview.lastMessage,
+            lastSeen: preview.lastSeen,
+          } satisfies ChatPreview;
+        }),
+      );
 
+      setChats(previews);
+      setSelectedChatId((currentSelected) => currentSelected || previews[0]?.id || null);
+    } catch (error) {
+      console.error("Failed to fetch rooms", error);
+      setDbRooms([]);
+      setChats([]);
+    } finally {
+      setIsLoadingRooms(false);
+    }
+  }, [fetchRoomLastMessagePreview]);
+
+  const fetchMessagesForRoom = useCallback(
+    async (roomId: string) => {
+      setIsLoadingMessages(true);
       try {
-        const res = await fetch(
-          `/api/messages?room_id=${roomId}&limit=${limit}&offset=${currentOffset}`,
+        const response = await fetch(
+          `/api/messages?room_id=${encodeURIComponent(roomId)}&limit=100&offset=0`,
         );
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-
-        const newMessages = (data.messages || [])
-          .map(transformToChatMessage)
-          .reverse();
-
-        setMessagesByChat((prev) => {
-          const existing = isLoadMore ? prev[roomId] || [] : [];
-          const combined = isLoadMore
-            ? [...newMessages, ...existing]
-            : newMessages;
-
-          const unique = combined.filter(
-            (msg: ChatMessage, index: number, self: ChatMessage[]) =>
-              index === self.findIndex((m: ChatMessage) => m.id === msg.id),
-          );
-
-          return { ...prev, [roomId]: unique };
-        });
-
-        setOffsets((prev) => ({
-          ...prev,
-          [roomId]: currentOffset + newMessages.length,
-        }));
-
-        setHasMoreMessages((prev) => ({
-          ...prev,
-          [roomId]: (data.messages || []).length === limit,
-        }));
-
-        if (isLoadMore && scrollContainerRef.current) {
-          const container = scrollContainerRef.current;
-          const oldHeight = container.scrollHeight;
-          const oldScrollTop = container.scrollTop;
-
-          requestAnimationFrame(() => {
-            const newHeight = container.scrollHeight;
-            const heightDiff = newHeight - oldHeight;
-            container.scrollTop = oldScrollTop + heightDiff;
-          });
+        const data = await response.json();
+        if (!response.ok || data.error) {
+          throw new Error(data.error || "Failed to fetch messages");
         }
-      } catch (err) {
-        console.error("Failed to fetch messages:", err);
+
+        const parsed = (data.messages || []).map(transformToChatMessage).reverse();
+
+        setMessagesByChat((prev) => ({
+          ...prev,
+          [roomId]: parsed,
+        }));
+      } catch (error) {
+        console.error("Failed to fetch messages", error);
+        setMessagesByChat((prev) => ({
+          ...prev,
+          [roomId]: [],
+        }));
       } finally {
         setIsLoadingMessages(false);
-        setIsLoadingMore(false);
       }
     },
-    [offsets, isLoadingMessages, isLoadingMore, transformToChatMessage],
+    [transformToChatMessage],
   );
 
-  /* ---------------- Auto Scroll ---------------- */
+  const fetchMemberCount = useCallback(async (roomId: string) => {
+    try {
+      const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/members`);
+      if (!response.ok) {
+        return;
+      }
 
-  useEffect(() => {
-    if (scrollContainerRef.current && !isLoadingMore) {
-      const container = scrollContainerRef.current;
-      container.scrollTop = container.scrollHeight;
+      const data = await response.json();
+      const count = Array.isArray(data.members) ? data.members.length : 0;
+      setMemberCountByRoom((prev) => ({
+        ...prev,
+        [roomId]: count,
+      }));
+    } catch {
+      // Member count is optional metadata in the UI.
     }
-  }, [selectedChatId, messagesByChat, isLoadingMore]);
-
-  /* ---------------- Wallet Sync ---------------- */
+  }, []);
 
   useEffect(() => {
-    const checkWallet = async () => {
+    fetchCurrentUser();
+    fetchRooms();
+  }, [fetchCurrentUser, fetchRooms]);
+
+  useEffect(() => {
+    const syncWallet = async () => {
       const address = await getPublicKey();
-      setWalletConnected(!!address);
-      if (address) setCurrentPublicKey(address);
+      setCurrentPublicKey(address || null);
     };
-    checkWallet();
+
+    void syncWallet();
     const unsubscribe = onDisconnect(() => {
-      setWalletConnected(false);
       setCurrentPublicKey(null);
     });
-    const interval = setInterval(checkWallet, 3000);
+    const interval = setInterval(() => {
+      void syncWallet();
+    }, 3000);
+
     return () => {
       unsubscribe();
       clearInterval(interval);
     };
   }, []);
 
-  /* ---------------- Reputation ---------------- */
+  useEffect(() => {
+    if (!selectedChatId) {
+      return;
+    }
+
+    if (!messagesByChat[selectedChatId]) {
+      fetchMessagesForRoom(selectedChatId);
+    }
+
+    if (memberCountByRoom[selectedChatId] === undefined) {
+      fetchMemberCount(selectedChatId);
+    }
+  }, [
+    selectedChatId,
+    messagesByChat,
+    memberCountByRoom,
+    fetchMessagesForRoom,
+    fetchMemberCount,
+  ]);
 
   useEffect(() => {
-    const updateScore = () =>
-      setReputationScore(calculateReputation(currentPublicKey));
-    updateScore();
-    window.addEventListener("reputationUpdate", updateScore);
-    return () => window.removeEventListener("reputationUpdate", updateScore);
-  }, [currentPublicKey]);
-
-  /* ---------------- Select Chat ---------------- */
-
-  const handleSelectChat = async (id: string) => {
-    setSelectedChatId(id);
-    if (!messagesByChat[id]) {
-      fetchHistoricalMessages(id);
+    if (scrollContainerRef.current) {
+      const container = scrollContainerRef.current;
+      container.scrollTop = container.scrollHeight;
     }
-  };
+  }, [selectedChatId, messagesByChat]);
 
-  /* ---------------- Send Message ---------------- */
+  const handleSelectChat = useCallback((chatId: string) => {
+    setSelectedChatId(chatId);
+    setMobileSidebarOpen(false);
+    setActiveMobileTab("conversation");
+  }, []);
 
-  const handleSendMessage = () => {
-    if (!inputMessage.trim() || !selectedChatId) return;
+  const handleSendMessage = useCallback(async () => {
+    const trimmedMessage = inputMessage.trim();
+    if (!trimmedMessage || !selectedChatId) {
+      return;
+    }
 
-    const newMessage: ChatMessage = {
-      id: `m${Date.now()}`,
+    const tempId = `temp_${Date.now()}`;
+    const optimisticMessage: ChatMessage = {
+      id: tempId,
       author: "me",
-      text: inputMessage,
+      text: trimmedMessage,
       time: new Date().toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
       }),
-      delivered: false,
-      read: false,
-      status: "sent",
+      status: "sending",
     };
 
     setMessagesByChat((prev) => ({
       ...prev,
-      [selectedChatId]: [...(prev[selectedChatId] || []), newMessage],
+      [selectedChatId]: [...(prev[selectedChatId] || []), optimisticMessage],
     }));
-
     setInputMessage("");
-    trackActivity(currentPublicKey, "message");
-  };
+    setIsSending(true);
 
-  const selectedChat = selectedChatId
-    ? (chats.find((c) => c.id === selectedChatId) ?? null)
-    : null;
+    try {
+      const response = await fetch("/api/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          room_id: selectedChatId,
+          content: trimmedMessage,
+        }),
+      });
+      const data = await response.json();
 
-  const messages = selectedChat ? (messagesByChat[selectedChat.id] ?? []) : [];
-  const selectedRoom = selectedChatId
-    ? (dbRooms.find((room) => room.id === selectedChatId) ?? null)
-    : null;
+      if (!response.ok || data.error) {
+        throw new Error(data.error || "Failed to send message");
+      }
+
+      const savedMessage: ChatMessage = data.message
+        ? transformToChatMessage(data.message)
+        : {
+            ...optimisticMessage,
+            status: "sent",
+          };
+
+      setMessagesByChat((prev) => ({
+        ...prev,
+        [selectedChatId]: (prev[selectedChatId] || []).map((message) =>
+          message.id === tempId ? savedMessage : message,
+        ),
+      }));
+
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.id === selectedChatId
+            ? {
+                ...chat,
+                lastMessage: trimmedMessage,
+                lastSeen: savedMessage.time,
+                unreadCount: 0,
+              }
+            : chat,
+        ),
+      );
+    } catch (error) {
+      console.error("Failed to send message", error);
+      setMessagesByChat((prev) => ({
+        ...prev,
+        [selectedChatId]: (prev[selectedChatId] || []).filter(
+          (message) => message.id !== tempId,
+        ),
+      }));
+    } finally {
+      setIsSending(false);
+    }
+  }, [inputMessage, selectedChatId, transformToChatMessage]);
+
+  const handleComposerKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        void handleSendMessage();
+      }
+    },
+    [handleSendMessage],
+  );
+
+  const filteredChats = useMemo(() => {
+    if (!query.trim()) {
+      return chats;
+    }
+
+    const lowered = query.toLowerCase();
+    return chats.filter(
+      (chat) =>
+        chat.name.toLowerCase().includes(lowered) ||
+        chat.lastMessage.toLowerCase().includes(lowered),
+    );
+  }, [chats, query]);
+
+  const selectedChat = useMemo(
+    () => chats.find((chat) => chat.id === selectedChatId) || null,
+    [chats, selectedChatId],
+  );
+
+  const selectedRoom = useMemo(
+    () => dbRooms.find((room) => room.id === selectedChatId) || null,
+    [dbRooms, selectedChatId],
+  );
+
   const canEditSelectedRoom =
     !!selectedRoom?.owner_wallet &&
     !!currentPublicKey &&
     selectedRoom.owner_wallet.toUpperCase() === currentPublicKey.toUpperCase();
 
+  const isMobileSidebarVisible = mobileSidebarOpen || activeMobileTab === "chats";
+  const messages = selectedChat ? (messagesByChat[selectedChat.id] || []) : [];
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Header />
-      <main className="flex-1 flex justify-center pt-24 pb-8">
-        <div className="w-full max-w-6xl h-[min(82vh,760px)] bg-card border rounded-2xl shadow-lg flex overflow-hidden">
-          {/* Sidebar */}
-          <aside className="w-[340px] border-r flex flex-col">
-            <div className="p-4 font-semibold text-sm border-b">Messages</div>
-            <div className="flex-1 overflow-y-auto">
-              {chats.map((chat) => (
-                <button
-                  key={chat.id}
-                  onClick={() => handleSelectChat(chat.id)}
-                  className="w-full text-left px-4 py-3 hover:bg-muted/20"
-                >
-                  {chat.name}
-                </button>
-              ))}
-            </div>
-          </aside>
 
-          {/* Chat Area */}
-          <section className="flex-1 flex flex-col">
-            {!selectedChat && <ChatEmptyState />}
-
-            {selectedChat && (
-              <>
-                <div className="flex items-center justify-between gap-4 border-b p-4">
-                  <div>
-                    <div className="font-semibold">{selectedChat.name}</div>
-                    {selectedRoom?.description && (
-                      <div className="text-sm text-muted-foreground">
-                        {selectedRoom.description}
-                      </div>
-                    )}
-                  </div>
-                  {selectedRoom && (
-                    <EditGroupDialog
-                      room={selectedRoom}
-                      canEdit={canEditSelectedRoom}
-                      onUpdated={(updatedRoom) => {
-                        setDbRooms((prev) =>
-                          prev.map((room) =>
-                            room.id === updatedRoom.id ? { ...room, ...updatedRoom } : room,
-                          ),
-                        );
-                        setChats((prev) =>
-                          prev.map((chat) =>
-                            chat.id === updatedRoom.id
-                              ? { ...chat, name: updatedRoom.name }
-                              : chat,
-                          ),
-                        );
-                      }}
-                    />
-                  )}
-                </div>
-
-                <div
-                  ref={scrollContainerRef}
-                  className="flex-1 overflow-y-auto p-4 space-y-3"
-                >
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={cn(
-                        "max-w-[70%] px-4 py-2 rounded-xl text-sm",
-                        message.author === "me"
-                          ? "ml-auto bg-primary/10"
-                          : "bg-card border",
-                      )}
-                    >
-                      {message.text}
+      <main className="flex-1 px-3 pt-24 pb-24 sm:px-6 md:pb-8">
+        <div className="mx-auto h-[min(84vh,820px)] w-full max-w-7xl overflow-hidden rounded-3xl border border-border/70 bg-card/90 shadow-[0_24px_64px_-24px_rgba(0,0,0,0.35)] backdrop-blur-sm">
+          <div className="relative flex h-full">
+            <aside
+              className={cn(
+                "absolute inset-y-0 left-0 z-20 w-full border-r border-border/70 bg-card md:static md:w-[340px] md:max-w-none",
+                "transition-transform duration-300 ease-out md:translate-x-0",
+                isMobileSidebarVisible ? "translate-x-0" : "-translate-x-full",
+              )}
+              aria-label="Group sidebar"
+            >
+              <div className="flex h-full flex-col">
+                <div className="space-y-3 border-b border-border/70 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="text-base font-semibold">Groups</h2>
+                    <div className="shrink-0">
+                      <ConnectWallet />
                     </div>
-                  ))}
+                  </div>
+
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="Search groups or messages"
+                      className="w-full rounded-xl border border-border/80 bg-background/70 py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
                 </div>
 
-                <div className="p-4 border-t flex gap-2">
-                  <input
-                    value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
-                    className="flex-1 border rounded-full px-4 py-2 text-sm"
-                    placeholder="Type a message"
-                  />
-                  <button
-                    onClick={handleSendMessage}
-                    className="bg-primary text-white rounded-full px-4"
-                  >
-                    Send
-                  </button>
+                <div className="flex-1 overflow-y-auto p-2">
+                  {isLoadingRooms && (
+                    <div className="flex h-full items-center justify-center text-muted-foreground">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    </div>
+                  )}
+
+                  {!isLoadingRooms && filteredChats.length === 0 && (
+                    <div className="p-4 text-sm text-muted-foreground">No groups found.</div>
+                  )}
+
+                  {!isLoadingRooms &&
+                    filteredChats.map((chat) => {
+                      const isActive = chat.id === selectedChatId;
+
+                      return (
+                        <button
+                          key={chat.id}
+                          type="button"
+                          onClick={() => handleSelectChat(chat.id)}
+                          className={cn(
+                            "mb-1 w-full rounded-xl border border-transparent p-3 text-left transition",
+                            "hover:bg-muted/40",
+                            isActive && "border-primary/25 bg-primary/10",
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <PresenceIndicator status={chat.status} />
+                                <p className="truncate text-sm font-medium">{chat.name}</p>
+                              </div>
+                              <p className="mt-1 truncate text-xs text-muted-foreground">
+                                {chat.lastMessage}
+                              </p>
+                            </div>
+
+                            <div className="shrink-0 text-right">
+                              <p className="text-[11px] text-muted-foreground">{chat.lastSeen}</p>
+                              {chat.unreadCount > 0 && (
+                                <span className="mt-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">
+                                  {chat.unreadCount}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
                 </div>
-              </>
+              </div>
+            </aside>
+
+            {mobileSidebarOpen && (
+              <button
+                type="button"
+                aria-label="Close group sidebar"
+                className="absolute inset-0 z-10 bg-black/30 md:hidden"
+                onClick={() => setMobileSidebarOpen(false)}
+              />
             )}
-          </section>
+
+            <section
+              className={cn(
+                "flex flex-1 flex-col bg-background/30 transition-opacity duration-300",
+                activeMobileTab === "chats" && "hidden md:flex",
+              )}
+            >
+              {!selectedChat && <ChatEmptyState />}
+
+              {selectedChat && (
+                <>
+                  <header className="border-b border-border/70 bg-card/70 px-4 py-3 backdrop-blur-sm sm:px-5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <button
+                          type="button"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border/80 md:hidden"
+                          onClick={() => setMobileSidebarOpen(true)}
+                          aria-label="Open groups"
+                        >
+                          <Menu className="h-4 w-4" />
+                        </button>
+
+                        <button
+                          type="button"
+                          className="hidden h-9 w-9 items-center justify-center rounded-lg border border-border/80 md:inline-flex"
+                          onClick={() => setSelectedChatId(null)}
+                          aria-label="Back to empty state"
+                        >
+                          <ArrowLeft className="h-4 w-4" />
+                        </button>
+
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold">{selectedChat.name}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {memberCountByRoom[selectedChat.id] !== undefined
+                              ? `${memberCountByRoom[selectedChat.id]} members`
+                              : "Member count unavailable"}
+                            {` • ${selectedChat.address.slice(0, 8)}...`}
+                          </p>
+                          {selectedRoom?.description && (
+                            <p className="mt-1 truncate text-xs text-muted-foreground">
+                              {selectedRoom.description}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setRoomMembersOpen(true)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                        >
+                          <Users className="h-3.5 w-3.5" />
+                          Members
+                        </button>
+
+                        {selectedRoom && (
+                          <EditGroupDialog
+                            room={selectedRoom}
+                            canEdit={canEditSelectedRoom}
+                            onUpdated={(updatedRoom) => {
+                              setDbRooms((prev) =>
+                                prev.map((room) =>
+                                  room.id === updatedRoom.id ? { ...room, ...updatedRoom } : room,
+                                ),
+                              );
+                              setChats((prev) =>
+                                prev.map((chat) =>
+                                  chat.id === updatedRoom.id
+                                    ? {
+                                        ...chat,
+                                        name: updatedRoom.name,
+                                        address: updatedRoom.owner_wallet
+                                          ? `${updatedRoom.owner_wallet.slice(0, 4)}...${updatedRoom.owner_wallet.slice(-4)}`
+                                          : chat.address,
+                                      }
+                                    : chat,
+                                ),
+                              );
+                            }}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  </header>
+
+                  <div
+                    ref={scrollContainerRef}
+                    className="flex-1 overflow-y-auto bg-gradient-to-b from-background/40 to-background p-4 sm:p-5"
+                  >
+                    <div className="space-y-3">
+                      {isLoadingMessages && (
+                        <div className="flex h-full items-center justify-center text-muted-foreground">
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        </div>
+                      )}
+
+                      {!isLoadingMessages && messages.length === 0 && (
+                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                          No messages yet. Start the conversation.
+                        </div>
+                      )}
+
+                      {!isLoadingMessages &&
+                        messages.map((message) => (
+                          <div
+                            key={message.id}
+                            className={cn(
+                              "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm shadow-sm sm:max-w-[72%]",
+                              message.author === "me"
+                                ? "ml-auto rounded-br-sm bg-primary text-primary-foreground"
+                                : "mr-auto rounded-bl-sm border border-border/70 bg-card",
+                            )}
+                          >
+                            <p className="whitespace-pre-wrap break-words leading-relaxed">
+                              {message.text}
+                            </p>
+                            <div
+                              className={cn(
+                                "mt-1 flex items-center justify-end gap-1 text-[10px]",
+                                message.author === "me"
+                                  ? "text-primary-foreground/80"
+                                  : "text-muted-foreground",
+                              )}
+                            >
+                              <span>{message.time}</span>
+                              {message.author === "me" && (
+                                <span aria-label={`Delivery status: ${message.status}`}>
+                                  {message.status === "sending" ? "..." : "OK"}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  <div className="border-t border-border/70 bg-card/80 p-3 backdrop-blur-sm sm:p-4">
+                    <div className="flex items-end gap-2 sm:gap-3">
+                      <button
+                        type="button"
+                        aria-label="Insert emoji"
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                      >
+                        <Smile className="h-4 w-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        aria-label="Attach file"
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                      >
+                        <Paperclip className="h-4 w-4" />
+                      </button>
+
+                      <textarea
+                        value={inputMessage}
+                        onChange={(event) => setInputMessage(event.target.value)}
+                        onKeyDown={handleComposerKeyDown}
+                        rows={1}
+                        placeholder="Type a message"
+                        className="min-h-10 max-h-32 flex-1 resize-none rounded-2xl border border-border/80 bg-background px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => void handleSendMessage()}
+                        disabled={!inputMessage.trim() || isSending}
+                        aria-label="Send message"
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-50"
+                      >
+                        {isSending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <SendHorizontal className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <RoomMembersDialog
+                    roomId={selectedChat.id}
+                    open={roomMembersOpen}
+                    onOpenChange={setRoomMembersOpen}
+                  />
+                </>
+              )}
+            </section>
+          </div>
         </div>
+
+        <nav
+          aria-label="Mobile navigation"
+          className="fixed inset-x-3 bottom-3 z-30 rounded-2xl border border-border/70 bg-card/95 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-card/85 md:hidden"
+          style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
+        >
+          <div className="grid grid-cols-2 gap-1 p-1.5">
+            <button
+              type="button"
+              aria-label="Show groups"
+              aria-pressed={activeMobileTab === "chats"}
+              onClick={() => {
+                setActiveMobileTab("chats");
+                setMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "inline-flex min-h-12 items-center justify-center gap-2 rounded-xl text-sm font-medium transition-colors",
+                activeMobileTab === "chats"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+              )}
+            >
+              <PanelLeft className="h-4 w-4" />
+              Groups
+            </button>
+            <button
+              type="button"
+              aria-label="Show conversation"
+              aria-pressed={activeMobileTab === "conversation"}
+              onClick={() => {
+                setActiveMobileTab("conversation");
+                setMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "inline-flex min-h-12 items-center justify-center gap-2 rounded-xl text-sm font-medium transition-colors",
+                activeMobileTab === "conversation"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+              )}
+            >
+              <MessageSquare className="h-4 w-4" />
+              Chat
+            </button>
+          </div>
+        </nav>
       </main>
+
       <Footer />
     </div>
   );

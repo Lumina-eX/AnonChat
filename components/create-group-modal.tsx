@@ -6,6 +6,8 @@ import { X, Users, Loader2, Info } from "lucide-react";
 import { getPublicKey, connect } from "@/app/stellar-wallet-kit";
 import { toast } from "react-hot-toast";
 import { trackActivity } from "@/lib/reputation";
+import { shortenWalletAddress } from "@/lib/utils";
+import { WalletAddress } from "@/components/wallet-address";
 
 export function CreateGroupModal() {
   const [isOpen, setIsOpen] = useState(false);
@@ -76,13 +78,15 @@ export function CreateGroupModal() {
     setIsSubmitting(true);
 
     try {
+      const shortenedAddress = shortenWalletAddress(publicKey);
+
       // Create the room using the real API explicitly since backend is set up
       const res = await fetch("/api/rooms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: groupName,
-          description: `Group created by ${publicKey.slice(0, 4)}...${publicKey.slice(-4)}`,
+          description: `Group created by ${shortenedAddress}`,
           is_private: false,
           max_fee: networkFee,
           owner_wallet: publicKey,
@@ -100,7 +104,7 @@ export function CreateGroupModal() {
       const newRoom = {
         id: room.id,
         name: room.name,
-        address: publicKey ? `${publicKey.slice(0, 4)} ... ${publicKey.slice(-4)}` : "Unknown",
+        address: shortenedAddress,
         lastMessage: "Group created",
         lastSeen: "Just now",
         unreadCount: 0,
@@ -180,6 +184,21 @@ export function CreateGroupModal() {
                   onChange={(e) => setGroupName(e.target.value)}
                   disabled={isSubmitting}
                 />
+              </div>
+
+              <div className="rounded-lg bg-muted/50 p-3 border border-border/50">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">Connected Wallet</p>
+                  <WalletAddress
+                    address={publicKey}
+                    className="max-w-full"
+                    addressClassName="text-primary"
+                    label="Connected wallet"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    This wallet will own the group and anchor its metadata on Stellar.
+                  </p>
+                </div>
               </div>
 
               <div className="rounded-lg bg-muted/50 p-3 border border-border/50">
