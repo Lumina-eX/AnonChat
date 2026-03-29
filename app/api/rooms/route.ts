@@ -10,6 +10,8 @@ import {
   logBlockchainOperation,
   generateCorrelationId,
 } from "@/lib/blockchain/logger";
+import { getAuthenticatedWalletAddress } from "@/lib/auth/wallet-identity";
+import { validateStellarAddress } from "@/lib/auth/validation";
 
 export async function GET(request: NextRequest) {
   try {
@@ -70,10 +72,33 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, description, is_private, max_fee } = body;
+    const { name, description, is_private, max_fee, owner_wallet } = body;
 
     if (!name) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
+    }
+
+    const authenticatedWallet = getAuthenticatedWalletAddress(user);
+    const requestWallet =
+      typeof owner_wallet === "string" ? owner_wallet.trim() : null;
+    const resolvedOwnerWallet = authenticatedWallet || requestWallet;
+
+    if (!resolvedOwnerWallet || !validateStellarAddress(resolvedOwnerWallet)) {
+      return NextResponse.json(
+        { error: "A valid Stellar owner wallet is required" },
+        { status: 400 },
+      );
+    }
+
+    if (
+      authenticatedWallet &&
+      requestWallet &&
+      authenticatedWallet !== requestWallet
+    ) {
+      return NextResponse.json(
+        { error: "owner_wallet does not match authenticated wallet" },
+        { status: 403 },
+      );
     }
 
     const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -88,6 +113,7 @@ export async function POST(request: NextRequest) {
         description,
         is_private: is_private || false,
         created_by: user.id,
+        owner_wallet: resolvedOwnerWallet,
       })
       .select();
 
@@ -101,6 +127,7 @@ export async function POST(request: NextRequest) {
       name: room.name,
       description: room.description,
       created_by: room.created_by,
+      owner_wallet: room.owner_wallet,
       created_at: room.created_at,
       is_private: room.is_private,
     };

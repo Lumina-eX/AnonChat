@@ -5,6 +5,7 @@ export interface GroupMetadata {
   name: string;
   description: string | null;
   created_by: string;
+  owner_wallet: string;
   created_at: string;
   is_private: boolean;
 }
@@ -39,6 +40,7 @@ export interface GroupCreationResponse {
     description: string | null;
     is_private: boolean;
     created_by: string;
+    owner_wallet: string;
     created_at: string;
     stellar_tx_hash: string | null;
     metadata_hash?: string | null;

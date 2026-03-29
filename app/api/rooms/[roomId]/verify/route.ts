@@ -38,6 +38,7 @@ export async function GET(
       name: room.name,
       description: room.description,
       created_by: room.created_by,
+      owner_wallet: room.owner_wallet,
       created_at: room.created_at,
       is_private: room.is_private,
     };

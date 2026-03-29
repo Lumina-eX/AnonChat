@@ -88,7 +88,8 @@ export function CreateGroupModal() {
           name: groupName,
           description: `Group created by ${shortenedAddress}`,
           is_private: false,
-          max_fee: networkFee
+          max_fee: networkFee,
+          owner_wallet: publicKey,
         })
       });
 

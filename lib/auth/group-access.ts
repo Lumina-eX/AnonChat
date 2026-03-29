@@ -9,7 +9,7 @@ export type GroupAccessResult =
 /**
  * Middleware-like utility to validate wallet membership before allowing access to group resources.
  * Checks against both direct wallet membership (group_membership) and user-profile membership (room_members).
- * 
+ *
  * @param roomId - The UUID of the chat room/group
  * @param walletAddress - The Stellar wallet address to validate
  * @returns Promise<GroupAccessResult>
