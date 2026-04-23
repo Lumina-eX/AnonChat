@@ -1,5 +1,4 @@
-Migration files and instructions
-================================
+# Migration files and instructions
 
 This repo includes SQL migration scripts in the `scripts/` folder. If you open a PR that adds or modifies these SQL files, please ask the repository maintainers (or CI) to apply them to the database in order.
 
@@ -7,13 +6,14 @@ Included migrations (apply in numeric order):
 
 - `001_create_profiles.sql`
 - `002_create_profile_trigger.sql`
-- `003_create_invites.sql`        (new)
-- `004_create_room_members.sql`   (new)
+- `003_create_invites.sql` (new)
+- `004_create_room_members.sql` (new)
 - `005_add_last_read_to_room_members.sql` (new)
 - `006_unread_view.sql`          (new)
+- `007_create_group_membership.sql`  (new)
 
-How to apply (psql)
---------------------
+## How to apply (psql)
+
 If you have direct DB access (preferred), run:
 
 ```bash
@@ -27,21 +27,23 @@ psql "$DATABASE_URL" -f scripts/003_create_invites.sql
 psql "$DATABASE_URL" -f scripts/004_create_room_members.sql
 psql "$DATABASE_URL" -f scripts/005_add_last_read_to_room_members.sql
 psql "$DATABASE_URL" -f scripts/006_unread_view.sql
+psql "$DATABASE_URL" -f scripts/007_create_group_membership.sql
 ```
 
-How to apply (Supabase)
------------------------
+## How to apply (Supabase)
+
 If the project uses Supabase, maintainers can run the same `psql` commands against the Supabase database connection string (available from the Supabase project settings), or use the Supabase dashboard SQL editor to run each migration in order.
 
-Notes for maintainers
----------------------
+## Notes for maintainers
+
 - These migrations introduce new tables, columns, and a view. Review the RLS policies in each script before applying in production.
 - `scripts/005_add_last_read_to_room_members.sql` adds `last_read_at` used by the unread-count view.
 - `scripts/006_unread_view.sql` creates `public.user_room_unreads` view and grants `SELECT` to `public` for convenience; adjust privileges as needed.
+- `scripts/007_create_group_membership.sql` creates `public.group_membership` table for wallet-based group membership tracking.
 - A development-only endpoint (`/api/rooms/seed-test`) was added that seeds a room for an authenticated user. It requires a valid Supabase session; do not enable any service-role or unauthenticated behavior in production without review.
 
-Including migrations in PRs
---------------------------
+## Including migrations in PRs
+
 When creating your PR:
 
 - Keep SQL files in `scripts/` and name them with a numeric prefix as above.

@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 
 export function Hero() {
   return (
@@ -50,10 +51,13 @@ export function Hero() {
 
         {/* CTA Buttons */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
-          <button className="px-8 py-4 bg-gradient-to-r from-primary to-accent text-primary-foreground font-bold rounded-lg hover:shadow-lg hover:shadow-primary/50 transition-all duration-300 hover:scale-105">
+          <Link href="/chat">
+            <button className="px-8 py-4 bg-gradient-to-r from-primary to-accent text-primary-foreground font-bold rounded-lg hover:shadow-lg hover:shadow-primary/50 transition-all duration-300 hover:scale-105 cursor-pointer">
             Start Chatting Now
           </button>
-          <button className="px-8 py-4 border border-border/50 rounded-lg hover:bg-card/50 transition-all duration-300 font-semibold">
+          </Link>
+        
+          <button className="px-8 py-4 border border-border/50 rounded-lg hover:bg-card/50 transition-all duration-300 font-semibold cursor-pointer">
             Learn More
           </button>
         </div>

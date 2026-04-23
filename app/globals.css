@@ -195,3 +195,150 @@
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
+
+/* Chat Empty State Animations */
+@keyframes empty-state-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes empty-state-pulse {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes empty-state-glow {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
+}
+
+@keyframes empty-state-dot-bounce {
+  0%, 60%, 100% {
+    opacity: 0.4;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes empty-state-bubble-float {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-2px) rotate(1deg);
+  }
+}
+
+@keyframes empty-state-accent-float-1 {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(5deg);
+  }
+}
+
+@keyframes empty-state-accent-float-2 {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-3px) rotate(-5deg);
+  }
+}
+
+@keyframes empty-state-sparkle {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.empty-state-float {
+  animation: empty-state-float 4s ease-in-out infinite;
+}
+
+.empty-state-pulse {
+  animation: empty-state-pulse 3s ease-in-out infinite;
+}
+
+.empty-state-glow {
+  animation: empty-state-glow 4s ease-in-out infinite;
+}
+
+.empty-state-bubble-1 {
+  animation: empty-state-bubble-float 5s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.empty-state-bubble-2 {
+  animation: empty-state-bubble-float 5s ease-in-out infinite 0.5s;
+  transform-origin: center;
+}
+
+.empty-state-dot-1 {
+  animation: empty-state-dot-bounce 1.4s ease-in-out infinite;
+}
+
+.empty-state-dot-2 {
+  animation: empty-state-dot-bounce 1.4s ease-in-out infinite 0.2s;
+}
+
+.empty-state-dot-3 {
+  animation: empty-state-dot-bounce 1.4s ease-in-out infinite 0.4s;
+}
+
+.empty-state-accent-1 {
+  animation: empty-state-accent-float-1 3s ease-in-out infinite;
+}
+
+.empty-state-accent-2 {
+  animation: empty-state-accent-float-2 3.5s ease-in-out infinite 0.3s;
+}
+
+.empty-state-accent-3 {
+  animation: empty-state-accent-float-1 4s ease-in-out infinite 0.6s;
+}
+
+.empty-state-sparkle {
+  animation: empty-state-sparkle 2s ease-in-out infinite;
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .empty-state-float,
+  .empty-state-pulse,
+  .empty-state-glow,
+  .empty-state-bubble-1,
+  .empty-state-bubble-2,
+  .empty-state-dot-1,
+  .empty-state-dot-2,
+  .empty-state-dot-3,
+  .empty-state-accent-1,
+  .empty-state-accent-2,
+  .empty-state-accent-3,
+  .empty-state-sparkle {
+    animation: none;
+  }
+}

@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { type NextRequest, NextResponse } from "next/server";
 import { computeHash } from "@/lib/blockchain/metadata-hash";
+import { computeHash, verifyHash } from "@/lib/blockchain/metadata-hash";
 import {
   getTransaction,
   getTransactionExplorerUrl,
@@ -17,10 +18,15 @@ export async function GET(
 ) {
   const correlationId = generateCorrelationId();
   const roomId = params.roomId;
+  { params }: { params: Promise<{ roomId: string }> },
+) {
+  const correlationId = generateCorrelationId();
+  const { roomId } = await params;
 
   try {
     const supabase = await createClient();
 
+    // Fetch room from database
     const { data: room, error } = await supabase
       .from("rooms")
       .select("*")
@@ -31,6 +37,7 @@ export async function GET(
       return NextResponse.json({ error: "Room not found" }, { status: 404 });
     }
 
+    // Prepare current metadata
     const currentMetadata: GroupMetadata = {
       id: room.id,
       name: room.name,
@@ -40,6 +47,7 @@ export async function GET(
       is_private: room.is_private,
     };
 
+    // Compute current metadata hash
     const currentMetadataHash = computeHash(currentMetadata);
 
     logBlockchainOperation(
@@ -53,6 +61,10 @@ export async function GET(
       correlationId
     );
 
+      correlationId,
+    );
+
+    // If no transaction hash, return unverified status
     if (!room.stellar_tx_hash) {
       const response: VerificationResponse = {
         groupId: roomId,
@@ -69,6 +81,20 @@ export async function GET(
     const transaction = await getTransaction(room.stellar_tx_hash);
 
     if (!transaction) {
+    // Retrieve transaction from blockchain
+    const transaction = await getTransaction(room.stellar_tx_hash);
+
+    if (!transaction) {
+      logBlockchainOperation(
+        "warn",
+        "Could not retrieve blockchain transaction",
+        {
+          groupId: roomId,
+          transactionHash: room.stellar_tx_hash,
+        },
+        correlationId,
+      );
+
       const response: VerificationResponse = {
         groupId: roomId,
         currentMetadataHash,
@@ -83,6 +109,24 @@ export async function GET(
 
     const blockchainMetadataHash = transaction.memo;
     const verified = currentMetadataHash === blockchainMetadataHash;
+
+    // Extract metadata hash from transaction memo
+    const blockchainMetadataHash = transaction.memo;
+
+    // Verify that current metadata matches blockchain record
+    const verified = currentMetadataHash === blockchainMetadataHash;
+
+    logBlockchainOperation(
+      "info",
+      "Verification complete",
+      {
+        groupId: roomId,
+        currentMetadataHash,
+        blockchainMetadataHash,
+        verified,
+      },
+      correlationId,
+    );
 
     const response: VerificationResponse = {
       groupId: roomId,
@@ -106,11 +150,20 @@ export async function GET(
         },
       },
       correlationId
+          type: error.name || "UnknownError",
+          message: error.message || "Unknown error",
+        },
+      },
+      correlationId,
     );
 
     return NextResponse.json(
       { error: "Failed to verify room metadata" },
       { status: 500 }
+    );
+  }
+}
+      { status: 500 },
     );
   }
 }

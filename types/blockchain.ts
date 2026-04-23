@@ -12,6 +12,7 @@ export interface GroupMetadata {
 export interface StellarTransactionResult {
   success: boolean;
   transactionHash?: string;
+  feeCharged?: string;
   error?: string;
 }
 
@@ -47,6 +48,7 @@ export interface GroupCreationResponse {
   blockchain: {
     submitted: boolean;
     transactionHash?: string;
+    feeCharged?: string;
     explorerUrl?: string;
   };
 }

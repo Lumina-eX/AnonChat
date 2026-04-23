@@ -2,16 +2,20 @@
 
 import React, { useState, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X, Users, Loader2 } from "lucide-react";
+import { X, Users, Loader2, Info } from "lucide-react";
 import { getPublicKey, connect } from "@/app/stellar-wallet-kit";
 import { toast } from "react-hot-toast";
 import { trackActivity } from "@/lib/reputation";
+import { shortenWalletAddress } from "@/lib/utils";
+import { WalletAddress } from "@/components/wallet-address";
 
 export function CreateGroupModal() {
   const [isOpen, setIsOpen] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [networkFee, setNetworkFee] = useState<string | null>(null);
+  const [isFetchingFee, setIsFetchingFee] = useState(false);
 
   useEffect(() => {
     async function checkWallet() {
@@ -20,8 +24,32 @@ export function CreateGroupModal() {
     }
     if (isOpen) {
       checkWallet();
+      fetchFee();
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isOpen) {
+      interval = setInterval(fetchFee, 15000); // refresh every 15s
+    }
+    return () => clearInterval(interval);
+  }, [isOpen]);
+
+  const fetchFee = async () => {
+    try {
+      if (!isFetchingFee && !networkFee) setIsFetchingFee(true);
+      const res = await fetch("/api/stellar/fee");
+      if (res.ok) {
+        const data = await res.json();
+        setNetworkFee(data.estimatedFee);
+      }
+    } catch (error) {
+      console.error("Failed to fetch fee:", error);
+    } finally {
+      setIsFetchingFee(false);
+    }
+  };
 
   const handleConnect = async () => {
     try {
@@ -48,16 +76,34 @@ export function CreateGroupModal() {
     }
 
     setIsSubmitting(true);
- 
-    // Simulate API call
+
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const shortenedAddress = shortenWalletAddress(publicKey);
+
+      // Create the room using the real API explicitly since backend is set up
+      const res = await fetch("/api/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: groupName,
+          description: `Group created by ${shortenedAddress}`,
+          is_private: false,
+          max_fee: networkFee
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to create group");
+      }
+
+      const { room, blockchain } = await res.json();
+
       trackActivity(publicKey, 'group');
 
       const newRoom = {
-        id: `room-${Date.now()}`,
-        name: groupName,
-        address: publicKey ? `${publicKey.slice(0, 4)} ... ${publicKey.slice(-4)}` : "Unknown",
+        id: room.id,
+        name: room.name,
+        address: shortenedAddress,
         lastMessage: "Group created",
         lastSeen: "Just now",
         unreadCount: 0,
@@ -68,14 +114,26 @@ export function CreateGroupModal() {
         window.dispatchEvent(new CustomEvent("roomCreated", { detail: newRoom }));
       }
 
-      toast.success(`Group "${groupName}" created successfully!`);
+      if (blockchain?.feeCharged) {
+        const xlmFee = (Number(blockchain.feeCharged) / 1e7).toFixed(7);
+        toast.success(`Group "${groupName}" created successfully! Network charged: ${xlmFee} XLM.`);
+      } else {
+        toast.success(`Group "${groupName}" created successfully!`);
+      }
       setGroupName("");
       setIsOpen(false);
     } catch (error) {
+      console.error(error);
       toast.error("Failed to create group. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const formatFee = (stroops: string | null) => {
+    if (!stroops) return "Calculating...";
+    const xlm = Number(stroops) / 1e7;
+    return `${xlm.toFixed(7)} XLM`;
   };
 
   return (
@@ -127,10 +185,44 @@ export function CreateGroupModal() {
                 />
               </div>
 
+              <div className="rounded-lg bg-muted/50 p-3 border border-border/50">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">Connected Wallet</p>
+                  <WalletAddress
+                    address={publicKey}
+                    className="max-w-full"
+                    addressClassName="text-primary"
+                    label="Connected wallet"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    This wallet will own the group and anchor its metadata on Stellar.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-muted/50 p-3 border border-border/50">
+                <div className="flex items-start gap-2">
+                  <Info className="h-4 w-4 text-muted-foreground mt-0.5" />
+                  <div className="flex-1">
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="font-medium">Estimated Network Fee</span>
+                      {isFetchingFee ? (
+                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                      ) : (
+                        <span className="font-mono text-primary font-medium">{formatFee(networkFee)}</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      This fee is required to execute the transaction on the Stellar network to anchor the group metadata.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <div className="pt-4 flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2">
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !networkFee}
                   className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-8 py-2"
                 >
                   {isSubmitting ? (

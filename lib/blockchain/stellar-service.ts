@@ -13,7 +13,8 @@ import { logBlockchainOperation, generateCorrelationId } from "./logger";
  */
 export async function submitMetadataHash(
   groupId: string,
-  metadataHash: string
+  metadataHash: string,
+  maxFee?: string | number
 ): Promise<StellarTransactionResult> {
   const correlationId = generateCorrelationId();
   const startTime = Date.now();
@@ -25,7 +26,7 @@ export async function submitMetadataHash(
       metadataHash,
       configured: false,
     }, correlationId);
-    
+
     return {
       success: false,
       error: "Stellar configuration not available",
@@ -63,11 +64,13 @@ export async function submitMetadataHash(
     // Build transaction with memo containing metadata hash
     // Truncate hash to 28 bytes if needed (Stellar memo limit)
     const memoText = metadataHash.substring(0, 28);
-    
+
+    const feeToUse = maxFee ? maxFee.toString() : StellarSdk.BASE_FEE;
+
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: StellarSdk.BASE_FEE,
-      networkPassphrase: config.network === "testnet" 
-        ? StellarSdk.Networks.TESTNET 
+      fee: feeToUse,
+      networkPassphrase: config.network === "testnet"
+        ? StellarSdk.Networks.TESTNET
         : StellarSdk.Networks.PUBLIC,
     })
       .addOperation(
@@ -93,11 +96,13 @@ export async function submitMetadataHash(
     ]);
 
     const duration = Date.now() - startTime;
+    const feeCharged = (result as any).fee_charged ? (result as any).fee_charged.toString() : feeToUse.toString();
 
     logBlockchainOperation("info", "Blockchain transaction successful", {
       groupId,
       metadataHash,
       transactionHash: result.hash,
+      feeCharged,
       duration,
       ledger: result.ledger,
     }, correlationId);
@@ -105,6 +110,7 @@ export async function submitMetadataHash(
     return {
       success: true,
       transactionHash: result.hash,
+      feeCharged,
     };
   } catch (error: any) {
     const duration = Date.now() - startTime;
@@ -150,7 +156,7 @@ export async function getTransaction(txHash: string): Promise<StellarTransaction
 
   try {
     const server = new StellarSdk.Horizon.Server(config.horizonUrl);
-    
+
     const transaction = await Promise.race([
       server.transactions().transaction(txHash).call(),
       new Promise<never>((_, reject) =>
