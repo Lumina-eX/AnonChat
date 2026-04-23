@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { type NextRequest, NextResponse } from "next/server";
+import { computeHash } from "@/lib/blockchain/metadata-hash";
 import { computeHash, verifyHash } from "@/lib/blockchain/metadata-hash";
 import {
   getTransaction,
@@ -13,6 +14,10 @@ import {
 
 export async function GET(
   request: NextRequest,
+  { params }: { params: { roomId: string } }
+) {
+  const correlationId = generateCorrelationId();
+  const roomId = params.roomId;
   { params }: { params: Promise<{ roomId: string }> },
 ) {
   const correlationId = generateCorrelationId();
@@ -53,6 +58,9 @@ export async function GET(
         currentMetadataHash,
         storedTxHash: room.stellar_tx_hash,
       },
+      correlationId
+    );
+
       correlationId,
     );
 
@@ -70,6 +78,9 @@ export async function GET(
       return NextResponse.json(response);
     }
 
+    const transaction = await getTransaction(room.stellar_tx_hash);
+
+    if (!transaction) {
     // Retrieve transaction from blockchain
     const transaction = await getTransaction(room.stellar_tx_hash);
 
@@ -95,6 +106,9 @@ export async function GET(
 
       return NextResponse.json(response);
     }
+
+    const blockchainMetadataHash = transaction.memo;
+    const verified = currentMetadataHash === blockchainMetadataHash;
 
     // Extract metadata hash from transaction memo
     const blockchainMetadataHash = transaction.memo;
@@ -131,6 +145,11 @@ export async function GET(
       {
         groupId: roomId,
         error: {
+          type: error?.name || "UnknownError",
+          message: error?.message || "Unknown error",
+        },
+      },
+      correlationId
           type: error.name || "UnknownError",
           message: error.message || "Unknown error",
         },
@@ -140,6 +159,10 @@ export async function GET(
 
     return NextResponse.json(
       { error: "Failed to verify room metadata" },
+      { status: 500 }
+    );
+  }
+}
       { status: 500 },
     );
   }
