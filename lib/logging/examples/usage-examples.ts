@@ -3,10 +3,11 @@
  * These examples demonstrate how to use the logging system in various scenarios
  */
 
-import { logger, LogEvent } from '../secure-logger';
+import { logger } from '../secure-logger';
+import { LogEvent } from '../event-types';
 import { withLogging, withDatabaseLogging } from '../middleware';
 import { createIntegratedLogger } from '../integrations';
-import { NextRequest, NextResponse } from 'next/server';
+// import { NextRequest, NextResponse } from 'next/server';
 
 // =============================================================================
 // BASIC USAGE EXAMPLES
@@ -23,9 +24,8 @@ export function basicLoggingExample() {
   // Error logging with context
   logger.error('Database connection failed', {
     error: {
-      type: 'ConnectionError',
-      message: 'Unable to connect to database',
-      code: 'DB_CONN_001'
+      type: 'DatabaseError',
+      message: 'Duplicate key violation'
     },
     retryCount: 3
   });
@@ -140,34 +140,16 @@ export function databaseLoggingExample() {
 // MIDDLEWARE EXAMPLES
 // =============================================================================
 
-// Example 7: API endpoint with logging middleware
-export const apiHandlerWithLogging = withLogging(
-  async (request: NextRequest) => {
-    // Your API logic here
-    const body = await request.json();
-    
-    // Process the request
-    const result = { success: true, data: body };
-    
-    return NextResponse.json(result);
-  },
-  {
-    includeRequestBody: false,  // Don't log request bodies (security)
-    includeResponseBody: false,  // Don't log response bodies (security)
-    excludePaths: ['/health', '/metrics']  // Skip logging for health checks
-  }
-);
-
 // Example 8: Database operation with logging
+const fetchUsersFromDatabase = async (roomId: string) => {
+  // Mock database logic
+  return [{ id: 'user-1', name: 'User 1' }];
+};
 export async function getUsersWithLogging(roomId: string) {
   return withDatabaseLogging(
     'select',
     'users',
-    async () => {
-      // Your database logic here
-      const users = await fetchUsersFromDatabase(roomId);
-      return users;
-    },
+    () => fetchUsersFromDatabase(roomId),
     { roomId, filter: 'active_only' }
   );
 }
@@ -231,6 +213,7 @@ export function customLoggerExample() {
   const customLogger = createIntegratedLogger({
     level: 'debug',
     enableConsoleOutput: true,
+    enableFileOutput: false,
     enableRemoteLogging: true,
     sensitiveFields: ['password', 'token', 'secret', 'custom_field'],
     redactionChar: '#',
@@ -255,12 +238,12 @@ export function customLoggerExample() {
 // Example 12: Environment-based configuration
 export function environmentLoggerExample() {
   // This will automatically load configuration from environment variables
-  import { envLogger } from '../integrations';
+  // import { envLogger } from '../integrations';
   
-  envLogger.info('Environment-based logging', {
-    userId: 'user-123',
-    action: 'environment_test'
-  });
+  // envLogger.info('Environment-based logging', {
+  //   userId: 'user-123',
+  //   action: 'environment_test'
+  // });
 }
 
 // =============================================================================
@@ -473,20 +456,20 @@ export async function exampleTimedUsage() {
 // Example 20: Testing with mock logger
 export function testingExample() {
   // In tests, you might want to use a mock logger
-  const mockLogger = new SecureLogger({
-    level: 'debug',
-    enableConsoleOutput: false, // Disable console output in tests
-    enableRemoteLogging: false,
-    sensitiveFields: ['password', 'token']
-  });
+  // const mockLogger = new SecureLogger({
+  //   level: 'debug',
+  //   enableConsoleOutput: false, // Disable console output in tests
+  //   enableRemoteLogging: false,
+  //   sensitiveFields: ['password', 'token']
+  // });
 
   // Test that sensitive data is properly redacted
-  mockLogger.info('Test logging', {
-    userId: 'test-user',
-    password: 'test-password',
-    safeField: 'test-data'
-  });
+  // mockLogger.info('Test logging', {
+  //   userId: 'test-user',
+  //   password: 'test-password',
+  //   safeField: 'test-data'
+  // });
 
-  // Assert that the log contains redacted data
+  // Assert that log contains redacted data
   // (This would be done in your actual test framework)
 }
