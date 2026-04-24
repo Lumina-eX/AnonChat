@@ -40,9 +40,9 @@ export function createWebSocketServer(port: number = 3001) {
     if (!room) return
 
     const messageStr = JSON.stringify(message)
-    room.users.forEach((userId) => {
-      const client = clients.get(userId)
-      if (client && client.ws.readyState === WebSocket.OPEN && userId !== excludeClientId) {
+    room.users.forEach((clientId) => {
+      const client = clients.get(clientId)
+      if (client && client.ws.readyState === WebSocket.OPEN && clientId !== excludeClientId) {
         client.ws.send(messageStr)
       }
     })
@@ -58,10 +58,12 @@ export function createWebSocketServer(port: number = 3001) {
   }
 
   function sendToUser(userId: string, message: any) {
-    const client = clients.get(userId)
-    if (client && client.ws.readyState === WebSocket.OPEN) {
-      client.ws.send(JSON.stringify(message))
-    }
+    const messageStr = JSON.stringify(message)
+    clients.forEach((client) => {
+      if (client.userId === userId && client.ws.readyState === WebSocket.OPEN) {
+        client.ws.send(messageStr)
+      }
+    })
   }
 
   function setupHeartbeat(clientId: string) {
@@ -88,6 +90,13 @@ export function createWebSocketServer(port: number = 3001) {
       client.ws.close()
     }
     clients.delete(clientId)
+
+    // Remove from all rooms
+    rooms.forEach((room) => {
+      if (room.users.has(clientId)) {
+        room.users.delete(clientId)
+      }
+    })
 
     // Notify about presence update
     if (client?.userId) {
@@ -173,7 +182,7 @@ export function createWebSocketServer(port: number = 3001) {
               rooms.set(roomId, { id: roomId, users: new Set() })
             }
 
-            rooms.get(roomId)?.users.add(userId)
+            rooms.get(roomId)?.users.add(clientId)
 
             // Notify room members
             broadcastToRoom(roomId, {
@@ -193,7 +202,7 @@ export function createWebSocketServer(port: number = 3001) {
             const leaveUserId = connection.userId
 
             if (leaveUserId && rooms.has(leaveRoomId)) {
-              rooms.get(leaveRoomId)?.users.delete(leaveUserId)
+              rooms.get(leaveRoomId)?.users.delete(clientId)
 
               broadcastToRoom(leaveRoomId, {
                 type: "room_leave",
@@ -237,6 +246,24 @@ export function createWebSocketServer(port: number = 3001) {
             }
 
             broadcastToRoom(msgRoomId, broadcastMessage)
+            break
+          }
+
+          case "message_delivered": {
+            const deliveredRoomId = message.payload.roomId
+            const deliveredMessageId = message.payload.messageId
+
+            // Broadcast status update to the room
+            // In a production app, we would also update the database here
+            broadcastToRoom(deliveredRoomId, {
+              type: "message_status_update",
+              payload: {
+                messageId: deliveredMessageId,
+                status: "delivered",
+                roomId: deliveredRoomId,
+              },
+              timestamp: Date.now(),
+            })
             break
           }
 

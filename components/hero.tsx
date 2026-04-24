@@ -16,7 +16,7 @@ export function Hero() {
 
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
         {/* Eyebrow Text */}
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-card border border-border/50 mb-8">
+        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-card border dark:border-muted border-border/50 mb-8">
           <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
           <span className="text-sm text-muted-foreground">
             The Future of Private Communication
@@ -57,13 +57,13 @@ export function Hero() {
           </button>
           </Link>
         
-          <button className="px-8 py-4 border border-border/50 rounded-lg hover:bg-card/50 transition-all duration-300 font-semibold cursor-pointer">
+          <button className="px-8 py-4 border dark:border-muted border-border/50 rounded-lg hover:bg-card/50 transition-all duration-300 font-semibold cursor-pointer">
             Learn More
           </button>
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-4 pt-16 border-t border-border/50">
+        <div className="grid grid-cols-3 gap-4 pt-16 border-t dark:border-muted border-border/50">
           <div className="text-center">
             <p className="text-3xl font-bold gradient-text">0</p>
             <p className="text-sm text-muted-foreground mt-2">Data Collected</p>

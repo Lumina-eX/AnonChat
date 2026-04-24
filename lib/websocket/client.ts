@@ -206,7 +206,7 @@ export class WebSocketClient {
 
   joinRoom(roomId: string) {
     this.send({
-      type: "room_join",
+      type: "join_room",
       payload: { roomId },
       timestamp: Date.now(),
     })
@@ -240,6 +240,14 @@ export class WebSocketClient {
       timestamp: Date.now(),
     })
     return { success: true }
+  }
+
+  markAsDelivered(messageId: string, roomId: string) {
+    this.send({
+      type: "message_delivered",
+      payload: { messageId, roomId },
+      timestamp: Date.now(),
+    })
   }
 
   notifyTyping(roomId: string) {

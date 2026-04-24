@@ -38,6 +38,7 @@ export function useRealtimeChat(roomId: string, userId?: string) {
     sendMessage,
     joinRoom,
     leaveRoom,
+    markAsDelivered,
     notifyTyping,
     notifyStopTyping,
   } = useWebSocketSend()
@@ -60,6 +61,31 @@ export function useRealtimeChat(roomId: string, userId?: string) {
     if ((msg.payload as any).roomId === roomId) {
       const messagePayload = msg.payload as any as RealtimeMessageUpdate
       setMessages((prev) => [...prev, messagePayload])
+
+      // Automatically mark as delivered if it's from someone else
+      if (messagePayload.userId !== userId) {
+        // Send WebSocket ack
+        markAsDelivered(messagePayload.id, roomId)
+
+        // Also update database via API for persistence
+        fetch("/api/messages", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: messagePayload.id, status: "delivered" }),
+        }).catch((err) => console.error("Failed to persist delivery status:", err))
+      }
+    }
+  })
+
+  // Listen for message status updates
+  useWebSocketMessage("message_status_update", (msg: WebSocketMessage) => {
+    const payload = msg.payload as any
+    if (payload.roomId === roomId) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === payload.messageId ? { ...m, status: payload.status } : m,
+        ),
+      )
     }
   })
 

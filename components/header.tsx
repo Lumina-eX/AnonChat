@@ -12,7 +12,7 @@ export function Header() {
   const [isOpen, setIsOpen] = useState(false)
 
   return (
-    <header className="fixed w-full top-0 z-50 bg-background/80 backdrop-blur-md border-b border-border/50 supports-backdrop-filter:bg-background/60">
+    <header className="fixed w-full top-0 z-50 bg-background/80 backdrop-blur-md border-b dark:border-muted border-border/50 supports-backdrop-filter:bg-background/60">
       <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 group">
