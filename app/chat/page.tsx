@@ -1,10 +1,19 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { ChatEmptyState } from "@/components/chat-empty-state";
-import { PresenceIndicator, type PresenceStatus } from "@/components/presence-indicator";
+import {
+  PresenceIndicator,
+  type PresenceStatus,
+} from "@/components/presence-indicator";
 import { RoomMembersDialog } from "@/components/room-members-dialog";
 import ConnectWallet from "@/components/wallet-connector";
 import { cn } from "@/lib/utils";
@@ -20,6 +29,8 @@ import {
   Smile,
   Users,
 } from "lucide-react";
+
+import { ChatMessage } from "@/components/chat-message";
 
 type ChatPreview = {
   id: string;
@@ -61,9 +72,9 @@ export default function ChatPage() {
   const [inputMessage, setInputMessage] = useState("");
   const [roomMembersOpen, setRoomMembersOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [activeMobileTab, setActiveMobileTab] = useState<"chats" | "conversation">(
-    "conversation",
-  );
+  const [activeMobileTab, setActiveMobileTab] = useState<
+    "chats" | "conversation"
+  >("conversation");
 
   const [currentUser, setCurrentUser] = useState<{ id: string } | null>(null);
   const [isLoadingRooms, setIsLoadingRooms] = useState(true);
@@ -71,8 +82,12 @@ export default function ChatPage() {
   const [isSending, setIsSending] = useState(false);
 
   const [chats, setChats] = useState<ChatPreview[]>([]);
-  const [messagesByChat, setMessagesByChat] = useState<Record<string, ChatMessage[]>>({});
-  const [memberCountByRoom, setMemberCountByRoom] = useState<Record<string, number>>({});
+  const [messagesByChat, setMessagesByChat] = useState<
+    Record<string, ChatMessage[]>
+  >({});
+  const [memberCountByRoom, setMemberCountByRoom] = useState<
+    Record<string, number>
+  >({});
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -163,7 +178,9 @@ export default function ChatPage() {
       );
 
       setChats(previews);
-      setSelectedChatId((currentSelected) => currentSelected || previews[0]?.id || null);
+      setSelectedChatId(
+        (currentSelected) => currentSelected || previews[0]?.id || null,
+      );
     } catch (error) {
       console.error("Failed to fetch rooms", error);
       setChats([]);
@@ -207,7 +224,9 @@ export default function ChatPage() {
 
   const fetchMemberCount = useCallback(async (roomId: string) => {
     try {
-      const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/members`);
+      const response = await fetch(
+        `/api/rooms/${encodeURIComponent(roomId)}/members`,
+      );
       if (!response.ok) {
         return;
       }
@@ -261,7 +280,8 @@ export default function ChatPage() {
     setActiveMobileTab("conversation");
   }, []);
 
-  const isMobileSidebarVisible = mobileSidebarOpen || activeMobileTab === "chats";
+  const isMobileSidebarVisible =
+    mobileSidebarOpen || activeMobileTab === "chats";
 
   const handleSendMessage = useCallback(async () => {
     const trimmedMessage = inputMessage.trim();
@@ -373,7 +393,7 @@ export default function ChatPage() {
     [chats, selectedChatId],
   );
 
-  const messages = selectedChat ? (messagesByChat[selectedChat.id] || []) : [];
+  const messages = selectedChat ? messagesByChat[selectedChat.id] || [] : [];
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -418,7 +438,9 @@ export default function ChatPage() {
                   )}
 
                   {!isLoadingRooms && filteredChats.length === 0 && (
-                    <div className="p-4 text-sm text-muted-foreground">No groups found.</div>
+                    <div className="p-4 text-sm text-muted-foreground">
+                      No groups found.
+                    </div>
                   )}
 
                   {!isLoadingRooms &&
@@ -440,7 +462,9 @@ export default function ChatPage() {
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                 <PresenceIndicator status={chat.status} />
-                                <p className="font-medium text-sm truncate">{chat.name}</p>
+                                <p className="font-medium text-sm truncate">
+                                  {chat.name}
+                                </p>
                               </div>
                               <p className="text-xs text-muted-foreground truncate mt-1">
                                 {chat.lastMessage}
@@ -448,7 +472,9 @@ export default function ChatPage() {
                             </div>
 
                             <div className="shrink-0 text-right">
-                              <p className="text-[11px] text-muted-foreground">{chat.lastSeen}</p>
+                              <p className="text-[11px] text-muted-foreground">
+                                {chat.lastSeen}
+                              </p>
                               {chat.unreadCount > 0 && (
                                 <span className="inline-flex items-center justify-center min-w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold mt-1 px-1.5">
                                   {chat.unreadCount}
@@ -504,7 +530,9 @@ export default function ChatPage() {
                         </button>
 
                         <div className="min-w-0">
-                          <p className="font-semibold truncate">{selectedChat.name}</p>
+                          <p className="font-semibold truncate">
+                            {selectedChat.name}
+                          </p>
                           <p className="text-xs text-muted-foreground truncate">
                             {memberCountByRoom[selectedChat.id] !== undefined
                               ? `${memberCountByRoom[selectedChat.id]} members`
@@ -543,33 +571,7 @@ export default function ChatPage() {
 
                     {!isLoadingMessages &&
                       messages.map((message) => (
-                        <div
-                          key={message.id}
-                          className={cn(
-                            "max-w-[85%] sm:max-w-[72%] rounded-2xl px-4 py-2.5",
-                            "text-sm shadow-sm",
-                            message.author === "me"
-                              ? "ml-auto bg-primary text-primary-foreground rounded-br-sm"
-                              : "mr-auto bg-card border border-border/70 rounded-bl-sm",
-                          )}
-                        >
-                          <p className="whitespace-pre-wrap break-words leading-relaxed">{message.text}</p>
-                          <div
-                            className={cn(
-                              "mt-1 flex items-center justify-end gap-1 text-[10px]",
-                              message.author === "me"
-                                ? "text-primary-foreground/80"
-                                : "text-muted-foreground",
-                            )}
-                          >
-                            <span>{message.time}</span>
-                            {message.author === "me" && (
-                              <span aria-label={`Delivery status: ${message.status}`}>
-                                {message.status === "sending" ? "..." : "✓✓"}
-                              </span>
-                            )}
-                          </div>
-                        </div>
+                        <ChatMessage key={message.id} message={message} />
                       ))}
                   </div>
 
@@ -593,7 +595,9 @@ export default function ChatPage() {
 
                       <textarea
                         value={inputMessage}
-                        onChange={(event) => setInputMessage(event.target.value)}
+                        onChange={(event) =>
+                          setInputMessage(event.target.value)
+                        }
                         onKeyDown={handleComposerKeyDown}
                         rows={1}
                         placeholder="Type a message"
