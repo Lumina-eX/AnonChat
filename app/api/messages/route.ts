@@ -7,8 +7,11 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const roomId = searchParams.get("room_id")
-    const limit = Number.parseInt(searchParams.get("limit") || "50")
-    const offset = Number.parseInt(searchParams.get("offset") || "0")
+    const rawLimit = Number.parseInt(searchParams.get("limit") || "50")
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 50
+    const rawOffset = Number.parseInt(searchParams.get("offset") || "0")
+    const offset = Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : 0
+    const before = searchParams.get("before")
 
     if (!roomId) {
       return NextResponse.json({ error: "room_id is required" }, { status: 400 })
@@ -40,16 +43,34 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden. You have been removed from this room." }, { status: 403 })
     }
 
-    const { data, error } = await supabase
+    const pageLimit = Math.min(limit + 1, 101)
+
+    let query = supabase
       .from("messages")
       .select("*, profiles(display_name, avatar_url)")
       .eq("room_id", roomId)
       .order("created_at", { ascending: false })
-      .range(offset, offset + limit - 1)
+
+    if (before) {
+      query = query.lt("created_at", before).range(0, pageLimit - 1)
+    } else {
+      query = query.range(offset, offset + pageLimit - 1)
+    }
+
+    const { data, error } = await query
 
     if (error) throw error
 
-    return NextResponse.json({ messages: data })
+    const messages = Array.isArray(data) ? [...data] : []
+    const hasMore = messages.length > limit
+    if (hasMore) {
+      messages.pop()
+    }
+
+    const lastMessage = messages[messages.length - 1] as { created_at?: string } | undefined
+    const nextCursor = hasMore && lastMessage?.created_at ? lastMessage.created_at : null
+
+    return NextResponse.json({ messages, hasMore, nextCursor })
   } catch (error) {
     console.error("[v0] GET /api/messages error:", error)
     return NextResponse.json({ error: "Failed to fetch messages" }, { status: 500 })

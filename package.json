@@ -6,7 +6,7 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "build": "next build",
+    "build": "next build --webpack",
     "dev": "next dev",
     "dev:ws": "node scripts/start-ws-server.js",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:ws\"",

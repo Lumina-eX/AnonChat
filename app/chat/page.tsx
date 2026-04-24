@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { ChatEmptyState } from "@/components/chat-empty-state";
@@ -37,6 +37,7 @@ type ChatMessage = {
   text: string;
   time: string;
   status: "sending" | "sent" | "delivered" | "read";
+  createdAt: string;
 };
 
 interface DBRoom {
@@ -55,7 +56,17 @@ interface DBMessage {
   created_at: string;
 }
 
+type MessagePaginationState = {
+  cursor: string | null;
+  hasMore: boolean;
+  isLoadingOlder: boolean;
+};
+
 export default function ChatPage() {
+  const PAGE_SIZE = 50;
+  const SCROLL_TOP_THRESHOLD_PX = 120;
+  const STICKY_BOTTOM_THRESHOLD_PX = 120;
+
   const [query, setQuery] = useState("");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState("");
@@ -73,8 +84,24 @@ export default function ChatPage() {
   const [chats, setChats] = useState<ChatPreview[]>([]);
   const [messagesByChat, setMessagesByChat] = useState<Record<string, ChatMessage[]>>({});
   const [memberCountByRoom, setMemberCountByRoom] = useState<Record<string, number>>({});
+  const [paginationByRoom, setPaginationByRoom] = useState<Record<string, MessagePaginationState>>(
+    {},
+  );
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const paginationByRoomRef = useRef(paginationByRoom);
+  const stickyToBottomRef = useRef(true);
+  const loadingOlderRoomsRef = useRef<Set<string>>(new Set());
+  const suppressNextScrollHandlerRef = useRef(false);
+  const pendingPrependScrollRef = useRef<{
+    roomId: string;
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
+
+  useEffect(() => {
+    paginationByRoomRef.current = paginationByRoom;
+  }, [paginationByRoom]);
 
   const transformToChatMessage = useCallback(
     (message: DBMessage): ChatMessage => ({
@@ -87,6 +114,7 @@ export default function ChatPage() {
         hour12: false,
       }),
       status: "read",
+      createdAt: message.created_at,
     }),
     [currentUser?.id],
   );
@@ -177,20 +205,26 @@ export default function ChatPage() {
       setIsLoadingMessages(true);
       try {
         const response = await fetch(
-          `/api/messages?room_id=${encodeURIComponent(roomId)}&limit=100&offset=0`,
+          `/api/messages?room_id=${encodeURIComponent(roomId)}&limit=${PAGE_SIZE}`,
         );
         const data = await response.json();
         if (!response.ok || data.error) {
           throw new Error(data.error || "Failed to fetch messages");
         }
 
-        const parsed = (data.messages || [])
-          .map(transformToChatMessage)
-          .reverse();
+        const parsed = (data.messages || []).map(transformToChatMessage).reverse();
 
         setMessagesByChat((prev) => ({
           ...prev,
           [roomId]: parsed,
+        }));
+        setPaginationByRoom((prev) => ({
+          ...prev,
+          [roomId]: {
+            cursor: data.nextCursor ?? null,
+            hasMore: Boolean(data.hasMore),
+            isLoadingOlder: false,
+          },
         }));
       } catch (error) {
         console.error("Failed to fetch messages", error);
@@ -198,11 +232,19 @@ export default function ChatPage() {
           ...prev,
           [roomId]: [],
         }));
+        setPaginationByRoom((prev) => ({
+          ...prev,
+          [roomId]: {
+            cursor: null,
+            hasMore: false,
+            isLoadingOlder: false,
+          },
+        }));
       } finally {
         setIsLoadingMessages(false);
       }
     },
-    [transformToChatMessage],
+    [PAGE_SIZE, transformToChatMessage],
   );
 
   const fetchMemberCount = useCallback(async (roomId: string) => {
@@ -249,11 +291,158 @@ export default function ChatPage() {
   ]);
 
   useEffect(() => {
-    if (scrollContainerRef.current) {
-      const container = scrollContainerRef.current;
-      container.scrollTop = container.scrollHeight;
+    if (!selectedChatId) {
+      return;
     }
-  }, [selectedChatId, messagesByChat]);
+    stickyToBottomRef.current = true;
+    pendingPrependScrollRef.current = null;
+  }, [selectedChatId]);
+
+  const loadOlderMessagesForRoom = useCallback(
+    async (roomId: string) => {
+      const pagination = paginationByRoomRef.current[roomId];
+      if (!pagination?.hasMore || !pagination.cursor) {
+        return;
+      }
+
+      if (loadingOlderRoomsRef.current.has(roomId)) {
+        return;
+      }
+
+      const container = scrollContainerRef.current;
+      if (!container) {
+        return;
+      }
+
+      loadingOlderRoomsRef.current.add(roomId);
+      pendingPrependScrollRef.current = {
+        roomId,
+        scrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop,
+      };
+
+      setPaginationByRoom((prev) => ({
+        ...prev,
+        [roomId]: {
+          cursor: pagination.cursor,
+          hasMore: pagination.hasMore,
+          isLoadingOlder: true,
+        },
+      }));
+
+      try {
+        const response = await fetch(
+          `/api/messages?room_id=${encodeURIComponent(roomId)}&limit=${PAGE_SIZE}&before=${encodeURIComponent(
+            pagination.cursor,
+          )}`,
+        );
+        const data = await response.json();
+        if (!response.ok || data.error) {
+          throw new Error(data.error || "Failed to fetch older messages");
+        }
+
+        const olderMessages = (data.messages || []).map(transformToChatMessage).reverse();
+        if (olderMessages.length > 0) {
+          setMessagesByChat((prev) => ({
+            ...prev,
+            [roomId]: [...olderMessages, ...(prev[roomId] || [])],
+          }));
+        } else {
+          pendingPrependScrollRef.current = null;
+        }
+
+        setPaginationByRoom((prev) => ({
+          ...prev,
+          [roomId]: {
+            cursor: data.nextCursor ?? null,
+            hasMore: Boolean(data.hasMore),
+            isLoadingOlder: false,
+          },
+        }));
+      } catch (error) {
+        console.error("Failed to fetch older messages", error);
+        pendingPrependScrollRef.current = null;
+        setPaginationByRoom((prev) => ({
+          ...prev,
+          [roomId]: {
+            cursor: prev[roomId]?.cursor ?? null,
+            hasMore: prev[roomId]?.hasMore ?? false,
+            isLoadingOlder: false,
+          },
+        }));
+      } finally {
+        loadingOlderRoomsRef.current.delete(roomId);
+      }
+    },
+    [PAGE_SIZE, transformToChatMessage],
+  );
+
+  const handleScroll = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container || !selectedChatId) {
+      return;
+    }
+
+    if (suppressNextScrollHandlerRef.current) {
+      suppressNextScrollHandlerRef.current = false;
+      return;
+    }
+
+    const distanceFromBottom =
+      container.scrollHeight - (container.scrollTop + container.clientHeight);
+    stickyToBottomRef.current = distanceFromBottom <= STICKY_BOTTOM_THRESHOLD_PX;
+
+    if (container.scrollTop <= SCROLL_TOP_THRESHOLD_PX) {
+      void loadOlderMessagesForRoom(selectedChatId);
+    }
+  }, [
+    SCROLL_TOP_THRESHOLD_PX,
+    STICKY_BOTTOM_THRESHOLD_PX,
+    loadOlderMessagesForRoom,
+    selectedChatId,
+  ]);
+
+  useLayoutEffect(() => {
+    const pending = pendingPrependScrollRef.current;
+    if (!pending || pending.roomId !== selectedChatId) {
+      return;
+    }
+
+    const container = scrollContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const scrollDelta = container.scrollHeight - pending.scrollHeight;
+    suppressNextScrollHandlerRef.current = true;
+    container.scrollTop = pending.scrollTop + scrollDelta;
+    pendingPrependScrollRef.current = null;
+  }, [messagesByChat, selectedChatId]);
+
+  const selectedMessagesLength = selectedChatId
+    ? (messagesByChat[selectedChatId]?.length ?? 0)
+    : 0;
+
+  useEffect(() => {
+    if (!selectedChatId) {
+      return;
+    }
+
+    if (pendingPrependScrollRef.current?.roomId === selectedChatId) {
+      return;
+    }
+
+    if (!stickyToBottomRef.current) {
+      return;
+    }
+
+    const container = scrollContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    container.scrollTop = container.scrollHeight;
+  }, [selectedChatId, selectedMessagesLength]);
 
   const handleSelectChat = useCallback((chatId: string) => {
     setSelectedChatId(chatId);
@@ -270,16 +459,18 @@ export default function ChatPage() {
     }
 
     const tempId = `temp_${Date.now()}`;
+    const nowIso = new Date().toISOString();
     const optimisticMessage: ChatMessage = {
       id: tempId,
       author: "me",
       text: trimmedMessage,
-      time: new Date().toLocaleTimeString([], {
+      time: new Date(nowIso).toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
       }),
       status: "sending",
+      createdAt: nowIso,
     };
 
     setMessagesByChat((prev) => ({
@@ -374,6 +565,7 @@ export default function ChatPage() {
   );
 
   const messages = selectedChat ? (messagesByChat[selectedChat.id] || []) : [];
+  const pagination = selectedChat ? paginationByRoom[selectedChat.id] : null;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -527,11 +719,20 @@ export default function ChatPage() {
 
                   <div
                     ref={scrollContainerRef}
-                    className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 bg-gradient-to-b from-background/40 to-background"
+                    onScroll={handleScroll}
+                    className="relative flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 bg-gradient-to-b from-background/40 to-background"
                   >
                     {isLoadingMessages && (
                       <div className="h-full flex items-center justify-center text-muted-foreground">
                         <Loader2 className="h-5 w-5 animate-spin" />
+                      </div>
+                    )}
+
+                    {!isLoadingMessages && pagination?.isLoadingOlder && (
+                      <div className="pointer-events-none absolute inset-x-0 top-3 flex items-center justify-center text-muted-foreground">
+                        <div className="rounded-full bg-background/70 p-1.5 shadow-sm border border-border/60">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        </div>
                       </div>
                     )}
 
