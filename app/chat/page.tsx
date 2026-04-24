@@ -72,7 +72,7 @@ export default function ChatPage() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
-  const [chats, setChats] = useState<ChatPreview[]>([]);
+  const [chats, setChats] = useState<Group[]>([]);
   const [messagesByChat, setMessagesByChat] = useState<Record<string, ChatMessage[]>>({});
   const [memberCountByRoom, setMemberCountByRoom] = useState<Record<string, number>>({});
 
@@ -160,7 +160,7 @@ export default function ChatPage() {
             status: (room.unread_count || 0) > 0 ? "online" : "recently_active",
             lastMessage: preview.lastMessage,
             lastSeen: preview.lastSeen,
-          } satisfies ChatPreview;
+          } satisfies Group;
         }),
       );
 
@@ -390,82 +390,19 @@ export default function ChatPage() {
       <main className="flex-1 pt-24 pb-24 md:pb-8 px-3 sm:px-6">
         <div className="mx-auto w-full max-w-7xl h-[min(84vh,820px)] rounded-3xl border border-border/70 bg-card/90 shadow-[0_24px_64px_-24px_rgba(0,0,0,0.35)] backdrop-blur-sm overflow-hidden">
           <div className="h-full flex relative">
-            <aside
+            <GroupSidebar
+              groups={filteredChats}
+              selectedGroupId={selectedChatId}
+              onSelectGroup={handleSelectChat}
+              isLoading={isLoadingRooms}
+              searchQuery={query}
+              onSearchChange={setQuery}
               className={cn(
-                "absolute inset-y-0 left-0 z-20 w-full border-r border-border/70 bg-card md:static md:w-[340px] md:max-w-none",
+                "absolute inset-y-0 left-0 z-20 w-full md:static md:w-[340px] md:max-w-none border-r border-border/70",
                 "transition-transform duration-300 ease-out md:translate-x-0",
                 isMobileSidebarVisible ? "translate-x-0" : "-translate-x-full",
               )}
-              aria-label="Group sidebar"
-            >
-              <div className="h-full flex flex-col">
-                <div className="p-4 border-b border-border/70 space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <h2 className="text-base font-semibold">Groups</h2>
-                    <div className="shrink-0">
-                      <ConnectWallet />
-                    </div>
-                  </div>
-
-                  <div className="relative">
-                    <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                    <input
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                      placeholder="Search groups or messages"
-                      className="w-full rounded-xl border border-border/80 bg-background/70 pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-2">
-                                   {isLoadingRooms && <RoomListSkeleton />}
-
-                  {!isLoadingRooms && filteredChats.length === 0 && (
-                    <div className="p-4 text-sm text-muted-foreground">No groups found.</div>
-                  )}
-
-                  {!isLoadingRooms &&
-                    filteredChats.map((chat) => {
-                      const isActive = chat.id === selectedChatId;
-
-                      return (
-                        <button
-                          key={chat.id}
-                          type="button"
-                          onClick={() => handleSelectChat(chat.id)}
-                          className={cn(
-                            "w-full text-left p-3 rounded-xl transition mb-1",
-                            "border border-transparent hover:bg-muted/40",
-                            isActive && "bg-primary/10 border-primary/25",
-                          )}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <PresenceIndicator status={chat.status} />
-                                <p className="font-medium text-sm truncate">{chat.name}</p>
-                              </div>
-                              <p className="text-xs text-muted-foreground truncate mt-1">
-                                {chat.lastMessage}
-                              </p>
-                            </div>
-
-                            <div className="shrink-0 text-right">
-                              <p className="text-[11px] text-muted-foreground">{chat.lastSeen}</p>
-                              {chat.unreadCount > 0 && (
-                                <span className="inline-flex items-center justify-center min-w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold mt-1 px-1.5">
-                                  {chat.unreadCount}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                </div>
-              </div>
-            </aside>
+            />
 
             {mobileSidebarOpen && (
               <button
