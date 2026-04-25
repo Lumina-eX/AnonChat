@@ -101,7 +101,7 @@ export class LogstashProvider implements RemoteLoggingProvider {
       };
 
       if (this.username && this.password) {
-        const auth = Buffer.from(`${this.username}:${this.password}`).toString('base64');
+        const auth = btoa(`${this.username}:${this.password}`);
         headers['Authorization'] = `Basic ${auth}`;
       }
 
@@ -150,7 +150,7 @@ export class DatadogProvider implements RemoteLoggingProvider {
         ...log,
         ddsource: 'nodejs',
         ddservice: this.service,
-        hostname: process.env.HOSTNAME || 'unknown',
+        hostname: 'unknown', // Simplified for browser compatibility
         timestamp: new Date(log.timestamp).getTime() * 1000000 // Convert to nanoseconds
       }));
 
@@ -243,7 +243,7 @@ export class CentralizedLogger {
   private buffer: any[] = [];
   private bufferSize: number;
   private flushInterval: number;
-  private flushTimer?: NodeJS.Timeout;
+  private flushTimer?: number;
 
   constructor(config: {
     bufferSize?: number;
@@ -312,7 +312,7 @@ export class CentralizedLogger {
    * Start automatic flush timer
    */
   private startFlushTimer(): void {
-    this.flushTimer = setInterval(() => {
+    this.flushTimer = window.setInterval(() => {
       this.flush();
     }, this.flushInterval);
   }
@@ -322,7 +322,7 @@ export class CentralizedLogger {
    */
   stop(): void {
     if (this.flushTimer) {
-      clearInterval(this.flushTimer);
+      window.clearInterval(this.flushTimer);
       this.flushTimer = undefined;
     }
     this.flush();
@@ -395,71 +395,27 @@ export function createIntegratedLogger(config: LoggerConfig & {
 }
 
 /**
- * Environment-based logger configuration
+ * Simple environment-based logger configuration (browser compatible)
  */
 export function createLoggerFromEnvironment() {
   const config: LoggerConfig = {
-    level: (process.env.LOG_LEVEL as any) || 'info',
-    enableConsoleOutput: process.env.LOG_CONSOLE !== 'false',
-    enableFileOutput: process.env.LOG_FILE === 'true',
-    enableRemoteLogging: process.env.LOG_REMOTE === 'true',
-    remoteEndpoint: process.env.LOG_REMOTE_ENDPOINT,
-    sensitiveFields: process.env.LOG_SENSITIVE_FIELDS?.split(',') || [
+    level: 'info', // Default level for browser
+    enableConsoleOutput: true,
+    enableFileOutput: false, // Not supported in browser
+    enableRemoteLogging: false, // Default to false for security
+    sensitiveFields: [
       'password', 'token', 'secret', 'key', 'auth', 'cookie', 'session',
       'authorization', 'signature', 'hash', 'salt', 'nonce', 'private',
       'address', 'ip', 'email', 'phone', 'content', 'message', 'text',
       'body', 'data', 'payload', 'metadata', 'wallet', 'stellar',
       'mnemonic', 'seed', 'passphrase'
     ],
-    redactionChar: process.env.LOG_REDACTION_CHAR || '*'
+    redactionChar: '*'
   };
-
-  const remoteProviders: any = {};
-  
-  // Elasticsearch configuration
-  if (process.env.ELASTICSEARCH_ENDPOINT) {
-    remoteProviders.elasticsearch = {
-      endpoint: process.env.ELASTICSEARCH_ENDPOINT,
-      apiKey: process.env.ELASTICSEARCH_API_KEY,
-      index: process.env.ELASTICSEARCH_INDEX || 'anonchat-logs',
-      enabled: process.env.ELASTICSEARCH_ENABLED !== 'false'
-    };
-  }
-
-  // Logstash configuration
-  if (process.env.LOGSTASH_ENDPOINT) {
-    remoteProviders.logstash = {
-      endpoint: process.env.LOGSTASH_ENDPOINT,
-      username: process.env.LOGSTASH_USERNAME,
-      password: process.env.LOGSTASH_PASSWORD,
-      enabled: process.env.LOGSTASH_ENABLED !== 'false'
-    };
-  }
-
-  // Datadog configuration
-  if (process.env.DATADOG_API_KEY) {
-    remoteProviders.datadog = {
-      apiKey: process.env.DATADOG_API_KEY,
-      site: process.env.DATADOG_SITE || 'datadoghq.com',
-      service: process.env.DATADOG_SERVICE || 'anonchat',
-      enabled: process.env.DATADOG_ENABLED !== 'false'
-    };
-  }
-
-  // HTTP webhook configuration
-  if (process.env.HTTP_LOG_ENDPOINT) {
-    remoteProviders.http = {
-      endpoint: process.env.HTTP_LOG_ENDPOINT,
-      headers: process.env.HTTP_LOG_HEADERS ? 
-        JSON.parse(process.env.HTTP_LOG_HEADERS) : undefined,
-      batchSize: parseInt(process.env.HTTP_LOG_BATCH_SIZE || '100'),
-      enabled: process.env.HTTP_LOG_ENABLED !== 'false'
-    };
-  }
 
   return createIntegratedLogger({
     ...config,
-    remoteProviders: Object.keys(remoteProviders).length > 0 ? remoteProviders : undefined
+    remoteProviders: undefined // No remote providers by default
   });
 }
 
