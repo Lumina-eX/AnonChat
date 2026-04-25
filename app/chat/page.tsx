@@ -42,7 +42,7 @@ type ChatPreview = {
   status: PresenceStatus;
 };
 
-type ChatMessage = {
+type ChatMessageProp = {
   id: string;
   author: "me" | "them";
   text: string;
@@ -83,7 +83,7 @@ export default function ChatPage() {
 
   const [chats, setChats] = useState<ChatPreview[]>([]);
   const [messagesByChat, setMessagesByChat] = useState<
-    Record<string, ChatMessage[]>
+    Record<string, ChatMessageProp[]>
   >({});
   const [memberCountByRoom, setMemberCountByRoom] = useState<
     Record<string, number>
@@ -92,7 +92,7 @@ export default function ChatPage() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const transformToChatMessage = useCallback(
-    (message: DBMessage): ChatMessage => ({
+    (message: DBMessage): ChatMessageProp => ({
       id: message.id,
       author: message.user_id === currentUser?.id ? "me" : "them",
       text: message.content,
@@ -290,7 +290,7 @@ export default function ChatPage() {
     }
 
     const tempId = `temp_${Date.now()}`;
-    const optimisticMessage: ChatMessage = {
+    const optimisticMessage: ChatMessageProp = {
       id: tempId,
       author: "me",
       text: trimmedMessage,
@@ -326,7 +326,7 @@ export default function ChatPage() {
         throw new Error(data.error || "Failed to send message");
       }
 
-      const savedMessage: ChatMessage = data.message
+      const savedMessage: ChatMessageProp = data.message
         ? transformToChatMessage(data.message)
         : {
             ...optimisticMessage,
