@@ -11,6 +11,7 @@ Included migrations (apply in numeric order):
 - `005_add_last_read_to_room_members.sql` (new)
 - `006_unread_view.sql`          (new)
 - `007_create_group_membership.sql`  (new)
+- `012_ephemeral_messages.sql`   (new) — adds TTL columns to messages and rooms
 
 ## How to apply (psql)
 

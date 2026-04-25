@@ -9,7 +9,8 @@
     "build": "next build",
     "dev": "next dev",
     "dev:ws": "node scripts/start-ws-server.js",
-    "dev:all": "concurrently \"npm run dev\" \"npm run dev:ws\"",
+    "dev:cleanup": "node -r ts-node/register -r tsconfig-paths/register scripts/start-cleanup-worker.js",
+    "dev:all": "concurrently \"npm run dev\" \"npm run dev:ws\" \"npm run dev:cleanup\"",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
     "test": "node scripts/verify-websocket.js",
     "test:vote-remove": "node scripts/test-vote-remove-api.mjs",
@@ -90,6 +91,8 @@
     "fast-check": "^4.5.3",
     "postcss": "^8.5",
     "tailwindcss": "^4.1.9",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
     "tw-animate-css": "1.3.3",
     "typescript": "^5.9.3",
     "ws": "^8.19.0"
