@@ -1,26 +1,28 @@
-"use client"
+"use client";
 
-import Link from "next/link"
-import Image from "next/image"
-import { ExternalLink } from "./external-link"
+import Link from "next/link";
+import Image from "next/image";
+import { ExternalLink } from "./external-link";
 
 export function Footer() {
   return (
-    <footer className="border-t border-border/50 py-12 bg-card/30 backdrop-blur">
+    <footer className="border-t dark:border-muted border-border/50 py-12 bg-card/30 backdrop-blur">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid md:grid-cols-4 gap-8 mb-8">
           {/* Brand */}
           <div>
             <Link href="/" className="flex items-center gap-1 mb-4">
-             <Image
-                        src="/anonchat-logo.webp"
-                        alt="AnonChat Logo"
-                        width={32}
-                        height={32}
-                      />
+              <Image
+                src="/anonchat-logo.webp"
+                alt="AnonChat Logo"
+                width={32}
+                height={32}
+              />
               <span className="text-lg font-bold gradient-text">AnonChat</span>
             </Link>
-            <p className="text-sm text-muted-foreground">Secure anonymous communication for free minds.</p>
+            <p className="text-sm text-muted-foreground">
+              Secure anonymous communication for free minds.
+            </p>
           </div>
 
           {/* Product */}
@@ -106,13 +108,21 @@ export function Footer() {
         </div>
 
         {/* Bottom Bar */}
-        <div className="border-t border-border/50 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
-          <p className="text-sm text-muted-foreground">© 2026 AnonChat. All rights reserved. Built for privacy.</p>
+        <div className="border-t dark:border-muted border-border/50 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
+          <p className="text-sm text-muted-foreground">
+            © 2026 AnonChat. All rights reserved. Built for privacy.
+          </p>
           <div className="flex gap-6">
-            <Link href="#" className="text-muted-foreground hover:text-primary transition-colors text-sm">
+            <Link
+              href="#"
+              className="text-muted-foreground hover:text-primary transition-colors text-sm"
+            >
               Twitter
             </Link>
-            <Link href="#" className="text-muted-foreground hover:text-primary transition-colors text-sm">
+            <Link
+              href="#"
+              className="text-muted-foreground hover:text-primary transition-colors text-sm"
+            >
               Discord
             </Link>
 
@@ -120,11 +130,11 @@ export function Footer() {
               className="text-muted-foreground hover:text-primary transition-colors text-sm"
               href="https://github.com/Lumina-eX/AnonChat"
             >
-                GitHub
+              GitHub
             </ExternalLink>
           </div>
         </div>
       </div>
     </footer>
-  )
+  );
 }
