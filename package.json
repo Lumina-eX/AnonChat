@@ -9,7 +9,7 @@
     "build": "next build",
     "dev": "next dev",
     "dev:ws": "node scripts/start-ws-server.js",
-    "dev:cleanup": "node -r ts-node/register -r tsconfig-paths/register scripts/start-cleanup-worker.js",
+    "dev:cleanup": "node scripts/start-cleanup-worker.js",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:ws\" \"npm run dev:cleanup\"",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
     "test": "node scripts/verify-websocket.js",

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X, Users, Loader2, Info } from "lucide-react";
+import { X, Users, Loader2, Info, Clock } from "lucide-react";
 import { getPublicKey, connect } from "@/app/stellar-wallet-kit";
 import { toast } from "react-hot-toast";
 import { trackActivity } from "@/lib/reputation";
@@ -16,6 +16,8 @@ export function CreateGroupModal() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [networkFee, setNetworkFee] = useState<string | null>(null);
   const [isFetchingFee, setIsFetchingFee] = useState(false);
+  // TTL: null = inherit system default, 0 = non-ephemeral, positive = seconds
+  const [ttlOption, setTtlOption] = useState<"inherit" | "off" | "1h" | "24h" | "7d">("inherit");
 
   useEffect(() => {
     async function checkWallet() {
@@ -77,6 +79,16 @@ export function CreateGroupModal() {
 
     setIsSubmitting(true);
 
+    // Resolve TTL option to seconds (null = inherit system default)
+    const ttlMap: Record<typeof ttlOption, number | null> = {
+      inherit: null,
+      off: 0,
+      "1h": 3_600,
+      "24h": 86_400,
+      "7d": 604_800,
+    };
+    const defaultTtlSeconds = ttlMap[ttlOption];
+
     try {
       const shortenedAddress = shortenWalletAddress(publicKey);
 
@@ -88,7 +100,8 @@ export function CreateGroupModal() {
           name: groupName,
           description: `Group created by ${shortenedAddress}`,
           is_private: false,
-          max_fee: networkFee
+          max_fee: networkFee,
+          default_ttl_seconds: defaultTtlSeconds,
         })
       });
 
@@ -121,6 +134,7 @@ export function CreateGroupModal() {
         toast.success(`Group "${groupName}" created successfully!`);
       }
       setGroupName("");
+      setTtlOption("inherit");
       setIsOpen(false);
     } catch (error) {
       console.error(error);
@@ -198,6 +212,48 @@ export function CreateGroupModal() {
                     This wallet will own the group and anchor its metadata on Stellar.
                   </p>
                 </div>
+              </div>
+
+              {/* Message TTL / ephemeral setting */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium leading-none flex items-center gap-1.5">
+                  <Clock className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                  Message Auto-Delete (TTL)
+                </label>
+                <div className="grid grid-cols-5 gap-1.5" role="radiogroup" aria-label="Message TTL">
+                  {(
+                    [
+                      { value: "inherit", label: "Default", title: "Inherit system-wide default TTL" },
+                      { value: "off",     label: "Never",   title: "Messages never auto-delete" },
+                      { value: "1h",      label: "1 h",     title: "Messages delete after 1 hour" },
+                      { value: "24h",     label: "24 h",    title: "Messages delete after 24 hours" },
+                      { value: "7d",      label: "7 d",     title: "Messages delete after 7 days" },
+                    ] as const
+                  ).map(({ value, label, title }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={ttlOption === value}
+                      title={title}
+                      onClick={() => setTtlOption(value)}
+                      className={`rounded-lg border py-1.5 text-xs font-medium transition-colors ${
+                        ttlOption === value
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border/60 bg-background text-muted-foreground hover:border-border hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {ttlOption === "inherit" && "New messages will follow the system-wide default TTL."}
+                  {ttlOption === "off"     && "Messages in this group will never be auto-deleted."}
+                  {ttlOption === "1h"      && "All new messages in this group will auto-delete after 1 hour."}
+                  {ttlOption === "24h"     && "All new messages in this group will auto-delete after 24 hours."}
+                  {ttlOption === "7d"      && "All new messages in this group will auto-delete after 7 days."}
+                </p>
               </div>
 
               <div className="rounded-lg bg-muted/50 p-3 border border-border/50">

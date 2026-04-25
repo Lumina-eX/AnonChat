@@ -18,6 +18,7 @@ import {
   Search,
   SendHorizontal,
   Smile,
+  Timer,
   Users,
 } from "lucide-react";
 import { MessageSkeleton, RoomListSkeleton } from "@/components/chat-skeleton";
@@ -38,6 +39,8 @@ type ChatMessage = {
   text: string;
   time: string;
   status: "sending" | "sent" | "delivered" | "read";
+  isEphemeral?: boolean;
+  expiresAt?: string | null;
 };
 
 interface DBRoom {
@@ -55,6 +58,8 @@ interface DBMessage {
   content: string;
   created_at: string;
   status?: "sent" | "delivered" | "read";
+  is_ephemeral?: boolean;
+  expires_at?: string | null;
 }
 
 export default function ChatPage() {
@@ -76,6 +81,11 @@ export default function ChatPage() {
   const [messagesByChat, setMessagesByChat] = useState<Record<string, ChatMessage[]>>({});
   const [memberCountByRoom, setMemberCountByRoom] = useState<Record<string, number>>({});
 
+  // Ephemeral message composer state
+  const [isEphemeralMode, setIsEphemeralMode] = useState(false);
+  // Countdown ticker — forces re-render every second so expiry labels stay fresh
+  const [, setTick] = useState(0);
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const transformToChatMessage = useCallback(
@@ -89,6 +99,8 @@ export default function ChatPage() {
         hour12: false,
       }),
       status: message.status || "sent",
+      isEphemeral: message.is_ephemeral ?? false,
+      expiresAt: message.expires_at ?? null,
     }),
     [currentUser?.id],
   );
@@ -230,6 +242,12 @@ export default function ChatPage() {
     fetchRooms();
   }, [fetchCurrentUser, fetchRooms]);
 
+  // Tick every second so ephemeral countdown labels stay current
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 1_000);
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     if (!selectedChatId) {
       return;
@@ -282,6 +300,8 @@ export default function ChatPage() {
         hour12: false,
       }),
       status: "sending",
+      isEphemeral: isEphemeralMode,
+      expiresAt: null,
     };
 
     setMessagesByChat((prev) => ({
@@ -300,6 +320,7 @@ export default function ChatPage() {
         body: JSON.stringify({
           room_id: selectedChatId,
           content: trimmedMessage,
+          is_ephemeral: isEphemeralMode,
         }),
       });
       const data = await response.json();
@@ -362,6 +383,27 @@ export default function ChatPage() {
     },
     [handleSendMessage, inputMessage],
   );
+
+  /**
+   * Returns a human-readable countdown string for an ephemeral message.
+   * e.g. "23h 59m", "4m 30s", "< 1s"
+   */
+  const formatExpiry = useCallback((expiresAt: string | null | undefined): string => {
+    if (!expiresAt) return "";
+    const remainingMs = new Date(expiresAt).getTime() - Date.now();
+    if (remainingMs <= 0) return "expired";
+    const totalSec = Math.floor(remainingMs / 1000);
+    if (totalSec < 60) return `${totalSec}s`;
+    const minutes = Math.floor(totalSec / 60);
+    const seconds = totalSec % 60;
+    if (minutes < 60) return `${minutes}m ${seconds}s`;
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    if (hours < 24) return `${hours}h ${mins}m`;
+    const days = Math.floor(hours / 24);
+    const hrs = hours % 24;
+    return `${days}d ${hrs}h`;
+  }, []);
 
   const filteredChats = useMemo(() => {
     if (!query.trim()) {
@@ -555,6 +597,9 @@ export default function ChatPage() {
                             message.author === "me"
                               ? "ml-auto bg-primary text-primary-foreground rounded-br-sm"
                               : "mr-auto bg-card border border-border/70 rounded-bl-sm",
+                            // Ephemeral messages get a subtle amber tint
+                            message.isEphemeral && message.author === "me" && "bg-amber-500/90 text-white",
+                            message.isEphemeral && message.author === "them" && "border-amber-400/50 bg-amber-50/10",
                           )}
                         >
                           <p className="whitespace-pre-wrap break-words leading-relaxed">{message.text}</p>
@@ -564,8 +609,30 @@ export default function ChatPage() {
                               message.author === "me"
                                 ? "text-primary-foreground/80"
                                 : "text-muted-foreground",
+                              message.isEphemeral && "text-amber-200/90",
                             )}
                           >
+                            {/* Ephemeral countdown badge */}
+                            {message.isEphemeral && message.expiresAt && (
+                              <span
+                                className="inline-flex items-center gap-0.5"
+                                title={`Expires at ${new Date(message.expiresAt).toLocaleString()}`}
+                                aria-label={`Ephemeral message, expires in ${formatExpiry(message.expiresAt)}`}
+                              >
+                                <Timer className="h-2.5 w-2.5" aria-hidden="true" />
+                                {formatExpiry(message.expiresAt)}
+                              </span>
+                            )}
+                            {/* Ephemeral badge without expiry (optimistic send) */}
+                            {message.isEphemeral && !message.expiresAt && (
+                              <span
+                                className="inline-flex items-center gap-0.5"
+                                aria-label="Ephemeral message"
+                              >
+                                <Timer className="h-2.5 w-2.5" aria-hidden="true" />
+                                ephemeral
+                              </span>
+                            )}
                             <span>{message.time}</span>
                             {message.author === "me" && (
                               <span aria-label={`Delivery status: ${message.status}`}>
@@ -579,6 +646,14 @@ export default function ChatPage() {
                   </div>
 
                   <div className="p-3 sm:p-4 border-t border-border/70 bg-card/80 backdrop-blur-sm">
+                    {/* Ephemeral mode banner */}
+                    {isEphemeralMode && (
+                      <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-400/30 px-3 py-1.5 text-xs text-amber-600 dark:text-amber-400">
+                        <Timer className="h-3 w-3 shrink-0" aria-hidden="true" />
+                        <span>Ephemeral mode — this message will auto-delete after 24 h</span>
+                      </div>
+                    )}
+
                     <div className="flex items-end gap-2 sm:gap-3">
                       <button
                         type="button"
@@ -596,13 +671,39 @@ export default function ChatPage() {
                         <Paperclip className="h-4 w-4" />
                       </button>
 
+                      {/* Ephemeral toggle */}
+                      <button
+                        type="button"
+                        onClick={() => setIsEphemeralMode((v) => !v)}
+                        aria-label={isEphemeralMode ? "Disable ephemeral mode" : "Enable ephemeral mode"}
+                        aria-pressed={isEphemeralMode}
+                        title={isEphemeralMode ? "Ephemeral mode on — click to disable" : "Send as ephemeral (auto-deletes)"}
+                        className={cn(
+                          "h-10 w-10 shrink-0 rounded-full border flex items-center justify-center transition-colors",
+                          isEphemeralMode
+                            ? "border-amber-400/60 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25"
+                            : "border-border/80 text-muted-foreground hover:text-foreground hover:bg-muted/40",
+                        )}
+                      >
+                        <Timer className="h-4 w-4" />
+                      </button>
+
                       <textarea
                         value={inputMessage}
                         onChange={(event) => setInputMessage(event.target.value)}
                         onKeyDown={handleComposerKeyDown}
                         rows={1}
-                        placeholder="Type a message (Enter to send, Shift+Enter for new line)"
-                        className="flex-1 min-h-10 max-h-32 resize-none rounded-2xl border border-border/80 bg-background px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                        placeholder={
+                          isEphemeralMode
+                            ? "Ephemeral message (auto-deletes after 24 h)…"
+                            : "Type a message (Enter to send, Shift+Enter for new line)"
+                        }
+                        className={cn(
+                          "flex-1 min-h-10 max-h-32 resize-none rounded-2xl border bg-background px-4 py-2.5 text-sm outline-none focus:ring-2",
+                          isEphemeralMode
+                            ? "border-amber-400/50 focus:ring-amber-400/30"
+                            : "border-border/80 focus:ring-primary/30",
+                        )}
                       />
 
                       <button

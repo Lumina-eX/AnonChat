@@ -70,10 +70,25 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, description, is_private, max_fee } = body;
+    const { name, description, is_private, max_fee, default_ttl_seconds } = body;
 
     if (!name) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
+    }
+
+    // Validate default_ttl_seconds if provided
+    let roomTtl: number | null = null;
+    if (default_ttl_seconds !== undefined && default_ttl_seconds !== null) {
+      const parsed = typeof default_ttl_seconds === "number"
+        ? Math.floor(default_ttl_seconds)
+        : parseInt(String(default_ttl_seconds), 10);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        return NextResponse.json(
+          { error: "default_ttl_seconds must be a non-negative integer or null" },
+          { status: 400 },
+        );
+      }
+      roomTtl = parsed;
     }
 
     const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -88,6 +103,7 @@ export async function POST(request: NextRequest) {
         description,
         is_private: is_private || false,
         created_by: user.id,
+        ...(roomTtl !== null ? { default_ttl_seconds: roomTtl } : {}),
       })
       .select();
 
