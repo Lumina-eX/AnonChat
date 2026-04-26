@@ -50,5 +50,10 @@ export interface GroupCreationResponse {
     transactionHash?: string;
     feeCharged?: string;
     explorerUrl?: string;
+    memo?: {
+      txHash: string;
+      memoValue: string | null;
+      memoType: string | null;
+    };
   };
 }

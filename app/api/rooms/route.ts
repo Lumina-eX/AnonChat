@@ -5,6 +5,7 @@ import {
   submitMetadataHash,
   getTransactionExplorerUrl,
 } from "@/lib/blockchain/stellar-service";
+import { submitGroupMemoTransaction } from "@/lib/blockchain/memo-service";
 import { GroupMetadata } from "@/types/blockchain";
 import {
   logBlockchainOperation,
@@ -181,6 +182,47 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Submit a dedicated group-ID memo transaction (non-blocking, graceful degradation)
+    let memoTxHash: string | null = null;
+    let memoValue: string | null = null;
+    let memoType: string | null = null;
+
+    try {
+      const memoResult = await submitGroupMemoTransaction(
+        room.id,
+        supabase,
+        user.id,
+        max_fee
+      );
+
+      if (memoResult.success) {
+        memoTxHash = memoResult.txHash ?? null;
+        memoValue = memoResult.memoValue ?? null;
+        memoType = memoResult.memoType ?? null;
+
+        logBlockchainOperation(
+          "info",
+          "Group memo transaction submitted",
+          { groupId: room.id, memoTxHash, memoValue, memoType },
+          correlationId,
+        );
+      } else {
+        logBlockchainOperation(
+          "warn",
+          "Group memo transaction failed, continuing without it",
+          { groupId: room.id, error: memoResult.error ? { type: "MemoError", message: memoResult.error } : undefined },
+          correlationId,
+        );
+      }
+    } catch (memoError: any) {
+      logBlockchainOperation(
+        "error",
+        "Group memo transaction error",
+        { groupId: room.id, error: { type: memoError.name || "UnknownError", message: memoError.message || "Unknown error" } },
+        correlationId,
+      );
+    }
+
     // Return success response with blockchain info
     return NextResponse.json(
       {
@@ -195,6 +237,9 @@ export async function POST(request: NextRequest) {
           transactionHash: stellarTxHash || undefined,
           feeCharged: actualFeeCharged || undefined,
           explorerUrl: explorerUrl || undefined,
+          memo: memoTxHash
+            ? { txHash: memoTxHash, memoValue, memoType }
+            : undefined,
         },
       },
       { status: 201 },
