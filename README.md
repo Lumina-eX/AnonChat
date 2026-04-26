@@ -4,13 +4,10 @@
 
 > Speak freely. Stay anonymous. Powered by Stellar.
 
-<!-- Replace `your-org/AnonChat` with the actual GitHub repository path -->
-[![CI](https://github.com/your-org/AnonChat/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/AnonChat/actions/workflows/ci.yml)
+[![CI](https://github.com/pugsley76/AnonChat/actions/workflows/ci.yml/badge.svg)](https://github.com/pugsley76/AnonChat/actions/workflows/ci.yml)
 [![Vercel](https://img.shields.io/badge/deployed-Vercel-black?logo=vercel)](https://anonchat-one.vercel.app)
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.9.0-brightgreen)](https://nodejs.org)
-
-> **Badge setup:** After pushing to GitHub, replace `your-org/AnonChat` in the CI badge URL above with your actual GitHub username/org and repository name. The Vercel badge will update automatically once the project is deployed.
 
 ---
 
@@ -171,7 +168,7 @@ flowchart TB
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/your-org/AnonChat.git
+git clone https://github.com/pugsley76/AnonChat.git
 cd AnonChat
 npm install
 ```
