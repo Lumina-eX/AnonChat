@@ -53,13 +53,19 @@ export function Hero() {
         <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
           <Link href="/chat">
             <button className="px-8 py-4 bg-gradient-to-r from-primary to-accent text-primary-foreground font-bold rounded-lg hover:shadow-lg hover:shadow-primary/50 transition-all duration-300 hover:scale-105 cursor-pointer">
-            Start Chatting Now
-          </button>
+              Start Chatting Now
+            </button>
           </Link>
-        
-          <button className="px-8 py-4 border dark:border-muted border-border/50 rounded-lg hover:bg-card/50 transition-all duration-300 font-semibold cursor-pointer">
-            Learn More
-          </button>
+
+          <Link
+            href="https://github.com/Lumina-eX/AnonChat/blob/main/docs/user-guide.md"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <button className="px-8 py-4 border dark:border-muted border-border/50 rounded-lg hover:bg-card/50 transition-all duration-300 font-semibold cursor-pointer">
+              User Guide
+            </button>
+          </Link>
         </div>
 
         {/* Stats */}

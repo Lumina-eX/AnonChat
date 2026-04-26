@@ -30,78 +30,89 @@ export function Footer() {
             <h3 className="font-semibold mb-4">Product</h3>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li>
-                <Link href="#" className="hover:text-primary transition-colors">
+                <Link href="/#features" className="hover:text-primary transition-colors">
                   Features
                 </Link>
               </li>
               <li>
-                <Link href="#" className="hover:text-primary transition-colors">
-                  Pricing
-                </Link>
-              </li>
-              <li>
-                <Link href="#" className="hover:text-primary transition-colors">
+                <Link href="/#security" className="hover:text-primary transition-colors">
                   Security
                 </Link>
               </li>
               <li>
-                <Link href="#" className="hover:text-primary transition-colors">
+                <Link href="/chat" className="hover:text-primary transition-colors">
+                  Start Chatting
+                </Link>
+              </li>
+              <li>
+                <ExternalLink
+                  href="https://github.com/Lumina-eX/AnonChat#-roadmap"
+                  className="hover:text-primary transition-colors"
+                >
                   Roadmap
-                </Link>
+                </ExternalLink>
               </li>
             </ul>
           </div>
 
-          {/* Company */}
+          {/* Docs */}
           <div>
-            <h3 className="font-semibold mb-4">Company</h3>
+            <h3 className="font-semibold mb-4">Docs</h3>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li>
-                <Link href="#" className="hover:text-primary transition-colors">
-                  About
-                </Link>
+                <ExternalLink
+                  href="https://github.com/Lumina-eX/AnonChat/blob/main/docs/user-guide.md"
+                  className="hover:text-primary transition-colors"
+                >
+                  User Guide
+                </ExternalLink>
               </li>
               <li>
-                <Link href="#" className="hover:text-primary transition-colors">
-                  Blog
-                </Link>
+                <ExternalLink
+                  href="https://github.com/Lumina-eX/AnonChat/blob/main/SETUP.md"
+                  className="hover:text-primary transition-colors"
+                >
+                  Setup Guide
+                </ExternalLink>
               </li>
               <li>
-                <Link href="#" className="hover:text-primary transition-colors">
-                  Community
-                </Link>
-              </li>
-              <li>
-                <Link href="#" className="hover:text-primary transition-colors">
-                  Contact
-                </Link>
+                <ExternalLink
+                  href="https://github.com/Lumina-eX/AnonChat/blob/main/CONTRIBUTING.md"
+                  className="hover:text-primary transition-colors"
+                >
+                  Contributing
+                </ExternalLink>
               </li>
             </ul>
           </div>
 
-          {/* Legal */}
+          {/* Community */}
           <div>
-            <h3 className="font-semibold mb-4">Legal</h3>
+            <h3 className="font-semibold mb-4">Community</h3>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li>
-                <Link href="#" className="hover:text-primary transition-colors">
-                  Privacy
-                </Link>
+                <ExternalLink
+                  href="https://github.com/Lumina-eX/AnonChat"
+                  className="hover:text-primary transition-colors"
+                >
+                  GitHub
+                </ExternalLink>
               </li>
               <li>
-                <Link href="#" className="hover:text-primary transition-colors">
-                  Terms
-                </Link>
+                <ExternalLink
+                  href="https://github.com/Lumina-eX/AnonChat/issues"
+                  className="hover:text-primary transition-colors"
+                >
+                  Report an Issue
+                </ExternalLink>
               </li>
               <li>
-                <Link href="#" className="hover:text-primary transition-colors">
-                  Cookies
-                </Link>
-              </li>
-              <li>
-                <Link href="#" className="hover:text-primary transition-colors">
-                  Licenses
-                </Link>
+                <ExternalLink
+                  href="https://github.com/Lumina-eX/AnonChat/blob/main/CONTRIBUTING.md"
+                  className="hover:text-primary transition-colors"
+                >
+                  Contribute
+                </ExternalLink>
               </li>
             </ul>
           </div>
