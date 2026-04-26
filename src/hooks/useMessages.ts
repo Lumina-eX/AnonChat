@@ -1,10 +1,12 @@
-import { useState, useCallback } from 'react';
-import { Message } from '../types/message';
+"use client";
+
+import { useState, useCallback } from "react";
+import { Message, AddMessageFn } from "../types/message";
 
 export function useMessages() {
   const [messages, setMessages] = useState<Message[]>([]);
 
-  const addMessage = useCallback((msg: Omit<Message, 'id' | 'timestamp'>) => {
+  const addMessage: AddMessageFn = useCallback((msg) => {
     const newMsg: Message = {
       ...msg,
       id: crypto.randomUUID(),
