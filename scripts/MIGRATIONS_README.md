@@ -1,56 +1,71 @@
-# Migration files and instructions
+# Database Migrations
 
-This repo includes SQL migration scripts in the `scripts/` folder. If you open a PR that adds or modifies these SQL files, please ask the repository maintainers (or CI) to apply them to the database in order.
+SQL migration scripts live in `scripts/`. Apply them in the order listed below — the numeric prefix determines the order. Some prefixes have multiple files; apply all of them before moving to the next number.
 
-Included migrations (apply in numeric order):
+## Migration order
 
-- `001_create_profiles.sql`
-- `002_create_profile_trigger.sql`
-- `003_create_invites.sql` (new)
-- `004_create_room_members.sql` (new)
-- `005_add_last_read_to_room_members.sql` (new)
-- `006_unread_view.sql`          (new)
-- `007_create_group_membership.sql`  (new)
+| File | Description |
+|---|---|
+| `001_create_profiles.sql` | User profiles table |
+| `002_create_profile_trigger.sql` | Auto-create profile on auth.users insert |
+| `003_create_invites.sql` | Group invite system |
+| `003_add_blockchain_fields.sql` | Blockchain metadata fields on rooms |
+| `003_room_members_and_removal_votes.sql` | Room membership and vote-to-remove tables |
+| `004_create_room_members.sql` | Room members table (RLS policies) |
+| `005_add_last_read_to_room_members.sql` | `last_read_at` column for unread counts |
+| `006_unread_view.sql` | `user_room_unreads` view |
+| `007_create_group_membership.sql` | Wallet-based group membership tracking |
+| `007_secure_messages_rls.sql` | Row-Level Security policies for messages |
+| `008_create_groups.sql` | Groups table with blockchain anchoring fields |
+| `009_encrypted_file_references.sql` | Encrypted file reference metadata |
+| `010_message_status.sql` | Message delivery status tracking |
+| `011_group_tx_memo_map.sql` | Group ID → Stellar transaction memo mapping |
+| `012_escrow_tables.sql` | Escrow records and escrow events audit log |
 
-## How to apply (psql)
+## How to apply
 
-If you have direct DB access (preferred), run:
+### Option A — Supabase SQL Editor
+
+Open your Supabase project → **SQL Editor → New query**, then paste and run each file in the order above.
+
+### Option B — psql
 
 ```bash
-# Example using a DATABASE_URL or connection string
-export DATABASE_URL="postgresql://<user>:<password>@<host>:5432/<database>"
+export DATABASE_URL="postgresql://postgres:<password>@<host>:5432/postgres"
 
-# Apply each file in order
-psql "$DATABASE_URL" -f scripts/001_create_profiles.sql
-psql "$DATABASE_URL" -f scripts/002_create_profile_trigger.sql
-psql "$DATABASE_URL" -f scripts/003_create_invites.sql
-psql "$DATABASE_URL" -f scripts/004_create_room_members.sql
-psql "$DATABASE_URL" -f scripts/005_add_last_read_to_room_members.sql
-psql "$DATABASE_URL" -f scripts/006_unread_view.sql
-psql "$DATABASE_URL" -f scripts/007_create_group_membership.sql
+for f in \
+  scripts/001_create_profiles.sql \
+  scripts/002_create_profile_trigger.sql \
+  scripts/003_create_invites.sql \
+  scripts/003_add_blockchain_fields.sql \
+  scripts/003_room_members_and_removal_votes.sql \
+  scripts/004_create_room_members.sql \
+  scripts/005_add_last_read_to_room_members.sql \
+  scripts/006_unread_view.sql \
+  scripts/007_create_group_membership.sql \
+  scripts/007_secure_messages_rls.sql \
+  scripts/008_create_groups.sql \
+  scripts/009_encrypted_file_references.sql \
+  scripts/010_message_status.sql \
+  scripts/011_group_tx_memo_map.sql \
+  scripts/012_escrow_tables.sql; do
+  echo "Applying $f..."
+  psql "$DATABASE_URL" -f "$f"
+done
 ```
 
-## How to apply (Supabase)
-
-If the project uses Supabase, maintainers can run the same `psql` commands against the Supabase database connection string (available from the Supabase project settings), or use the Supabase dashboard SQL editor to run each migration in order.
+The Supabase connection string is in your project: **Settings → Database → Connection string**.
 
 ## Notes for maintainers
 
-- These migrations introduce new tables, columns, and a view. Review the RLS policies in each script before applying in production.
-- `scripts/005_add_last_read_to_room_members.sql` adds `last_read_at` used by the unread-count view.
-- `scripts/006_unread_view.sql` creates `public.user_room_unreads` view and grants `SELECT` to `public` for convenience; adjust privileges as needed.
-- `scripts/007_create_group_membership.sql` creates `public.group_membership` table for wallet-based group membership tracking.
-- A development-only endpoint (`/api/rooms/seed-test`) was added that seeds a room for an authenticated user. It requires a valid Supabase session; do not enable any service-role or unauthenticated behavior in production without review.
+- All tables have Row-Level Security (RLS) enabled. Review RLS policies in each script before applying to production.
+- `005_add_last_read_to_room_members.sql` adds `last_read_at`, which is required by the unread-count view in `006`.
+- `006_unread_view.sql` creates `public.user_room_unreads` and grants `SELECT` to `public` — adjust privileges as needed.
+- `007_secure_messages_rls.sql` tightens message access; apply it after `007_create_group_membership.sql`.
+- `012_escrow_tables.sql` creates `escrows` and `escrow_events` tables used by the full escrow lifecycle.
 
-## Including migrations in PRs
+## Adding new migrations
 
-When creating your PR:
-
-- Keep SQL files in `scripts/` and name them with a numeric prefix as above.
-- Add a short description in the PR body listing the migrations and any manual steps required (e.g., reindexing, backfills).
-- If you expect maintainers to run migrations, include the `psql` commands or reference this file so they can apply them during merging or in CI.
-
-If you'd like, I can also:
-
-- Add a simple Node script that runs the migrations using an env var `DATABASE_URL`.
-- Add a GitHub Actions workflow that will apply migrations to a staging database (if secrets are available).
+- Name files with a numeric prefix: `013_your_migration.sql`
+- Add a row to the table above in your PR
+- Include the `psql` command in the PR description so maintainers can apply it during merge
