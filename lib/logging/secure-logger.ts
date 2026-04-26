@@ -1,73 +1,67 @@
+/**
+ * Secure Logging System
+ * 
+ * A privacy-compliant logging system that records system events without storing sensitive information.
+ * Addresses GitHub Issue #94: Logging Without Storing Sensitive Data
+ * 
+ * Features:
+ * - Configurable logging levels (debug, info, warn, error)
+ * - Automatic sensitive data redaction
+ * - Centralized logging service integration
+ * - Standardized log formats
+ * - Privacy compliance validation
+ */
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface LogError {
-  type: string;
-  message: string;
-  stack?: string;
+  readonly type: string;
+  readonly message: string;
+  readonly stack?: string;
 }
 
 export interface LogContext {
-  userId?: string;
-  roomId?: string;
-  sessionId?: string;
-  requestId?: string;
-  duration?: number;
-  error?: LogError;
-  [key: string]: unknown;
+  readonly userId?: string;
+  readonly roomId?: string;
+  readonly sessionId?: string;
+  readonly requestId?: string;
+  readonly duration?: number;
+  readonly error?: LogError;
+  readonly [key: string]: unknown;
 }
 
 export interface RemoteLoggingConfig {
-  endpoint: string;
-  apiKey?: string;
-  batchSize?: number;
-  flushInterval?: number;
-  retryAttempts?: number;
+  readonly endpoint: string;
+  readonly apiKey?: string;
+  readonly batchSize?: number;
+  readonly flushInterval?: number;
+  readonly retryAttempts?: number;
 }
 
 export interface StandardLogFormat {
-  timestamp: string;
-  level: LogLevel;
-  event: string;
-  correlationId: string;
-  service: string;
-  version: string;
-  context: LogContext;
-  sanitized: boolean;
-}
-
-/**
- * Generates a unique correlation ID for tracing operations
- */
-export function generateCorrelationId(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
-
-export interface SecureLogEntry {
-  timestamp: string;
-  level: LogLevel;
-  event: string;
-  correlationId: string;
-  context: LogContext;
-  metadata?: Record<string, unknown>;
+  readonly timestamp: string;
+  readonly level: LogLevel;
+  readonly event: string;
+  readonly correlationId: string;
+  readonly service: string;
+  readonly version: string;
+  readonly context: LogContext;
+  readonly sanitized: boolean;
 }
 
 export interface LoggerConfig {
-  level: LogLevel;
-  enableConsoleOutput: boolean;
-  enableFileOutput: boolean;
-  enableRemoteLogging: boolean;
-  remoteEndpoint?: string;
-  remoteConfig?: RemoteLoggingConfig;
-  sensitiveFields: string[];
-  redactionChar: string;
-  serviceName: string;
-  serviceVersion: string;
-  enableSanitization: boolean;
-  maxLogSize?: number;
+  readonly level: LogLevel;
+  readonly enableConsoleOutput: boolean;
+  readonly enableFileOutput: boolean;
+  readonly enableRemoteLogging: boolean;
+  readonly remoteEndpoint?: string;
+  readonly remoteConfig?: RemoteLoggingConfig;
+  readonly sensitiveFields: readonly string[];
+  readonly redactionChar: string;
+  readonly serviceName: string;
+  readonly serviceVersion: string;
+  readonly enableSanitization: boolean;
+  readonly maxLogSize?: number;
 }
 
 /**
@@ -76,161 +70,101 @@ export interface LoggerConfig {
  */
 const DEFAULT_SENSITIVE_FIELDS = [
   // Authentication & Security
-  'password',
-  'token',
-  'secret',
-  'key',
-  'auth',
-  'cookie',
-  'session',
-  'authorization',
-  'signature',
-  'hash',
-  'salt',
-  'nonce',
-  'private',
+  "password",
+  "token",
+  "secret",
+  "key",
+  "auth",
+  "cookie",
+  "session",
+  "authorization",
+  "signature",
+  "hash",
+  "salt",
+  "nonce",
+  "private",
   
   // Personal Identifiable Information
-  'address',
-  'ip',
-  'email',
-  'phone',
-  'userid',
-  'username',
-  'name',
+  "address",
+  "ip",
+  "email",
+  "phone",
+  "userid",
+  "username",
+  "name",
   
   // Message Content (Privacy Requirement)
-  'content',
-  'message',
-  'text',
-  'body',
-  'conversation',
-  'chat',
+  "content",
+  "message",
+  "text",
+  "body",
+  "conversation",
+  "chat",
   
   // Metadata (Privacy Requirement)
-  'data',
-  'payload',
-  'metadata',
-  'info',
-  'details',
+  "data",
+  "payload",
+  "metadata",
+  "info",
+  "details",
   
   // Blockchain/Crypto Specific
-  'wallet',
-  'stellar',
-  'mnemonic',
-  'seed',
-  'passphrase',
-  'privatekey',
-  'publickey',
+  "wallet",
+  "stellar",
+  "mnemonic",
+  "seed",
+  "passphrase",
+  "privatekey",
+  "publickey",
   
   // Network & Location
-  'location',
-  'geo',
-  'coordinates',
-  'useragent',
-  'fingerprint'
-];
+  "location",
+  "geo",
+  "coordinates",
+  "useragent",
+  "fingerprint"
+] as const;
 
 /**
  * Default logger configuration
  */
 const DEFAULT_CONFIG: LoggerConfig = {
-  level: 'info',
+  level: "info",
   enableConsoleOutput: true,
   enableFileOutput: false,
   enableRemoteLogging: false,
   sensitiveFields: DEFAULT_SENSITIVE_FIELDS,
-  redactionChar: '*',
-  serviceName: 'anonchat',
-  serviceVersion: '1.0.0',
+  redactionChar: "*",
+  serviceName: "anonchat",
+  serviceVersion: "1.0.0",
   enableSanitization: true,
   maxLogSize: 10000
-};
+} as const;
+
+/**
+ * Generates a unique correlation ID for tracing operations
+ */
+export function generateCorrelationId(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === "x" ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
 
 /**
  * Secure Logger class that provides centralized logging with sensitive data filtering
  * Enhanced for issue #94: Privacy-compliant logging with centralized service integration
  */
 export class SecureLogger {
-  private config: LoggerConfig;
+  private readonly config: LoggerConfig;
   private static instance: SecureLogger;
-  private logBatch: StandardLogFormat[] = [];
+  private logBatch: readonly StandardLogFormat[] = [];
   private batchTimer?: number;
 
   constructor(config: Partial<LoggerConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.initializeBatchProcessing();
-  }
-
-  /**
-   * Initialize batch processing for remote logging
-   */
-  private initializeBatchProcessing(): void {
-    if (this.config.enableRemoteLogging && this.config.remoteConfig) {
-      const interval = this.config.remoteConfig.flushInterval || 5000;
-      this.batchTimer = window.setInterval(() => {
-        this.flushLogBatch();
-      }, interval);
-    }
-  }
-
-  /**
-   * Flush log batch to remote logging service
-   */
-  private async flushLogBatch(): Promise<void> {
-    if (this.logBatch.length === 0 || !this.config.remoteConfig) return;
-
-    const batchToSend = [...this.logBatch];
-    this.logBatch = [];
-
-    try {
-      await this.sendToRemoteService(batchToSend);
-    } catch (error) {
-      // Retry logic
-      const retries = this.config.remoteConfig.retryAttempts || 3;
-      for (let i = 0; i < retries; i++) {
-        try {
-          await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
-          await this.sendToRemoteService(batchToSend);
-          break;
-        } catch (retryError) {
-          if (i === retries - 1) {
-            // Final retry failed, add back to batch
-            this.logBatch.unshift(...batchToSend);
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Send logs to remote logging service
-   */
-  private async sendToRemoteService(logs: StandardLogFormat[]): Promise<void> {
-    if (!this.config.remoteConfig) return;
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
-    if (this.config.remoteConfig.apiKey) {
-      headers['Authorization'] = `Bearer ${this.config.remoteConfig.apiKey}`;
-    }
-
-    const response = await fetch(this.config.remoteConfig.endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        logs,
-        service: this.config.serviceName,
-        version: this.config.serviceVersion,
-        timestamp: new Date().toISOString()
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Remote logging failed: ${response.status} ${response.statusText}`);
-    }
   }
 
   /**
@@ -247,20 +181,26 @@ export class SecureLogger {
    * Update logger configuration
    */
   updateConfig(config: Partial<LoggerConfig>): void {
-    this.config = { ...this.config, ...config };
+    Object.assign(this.config, config);
+  }
+
+  /**
+   * Initialize batch processing for remote logging
+   */
+  private initializeBatchProcessing(): void {
+    if (this.config.enableRemoteLogging && this.config.remoteConfig) {
+      const interval = this.config.remoteConfig.flushInterval ?? 5000;
+      this.batchTimer = window.setInterval(() => {
+        void this.flushLogBatch();
+      }, interval);
+    }
   }
 
   /**
    * Generate correlation ID for tracing
    */
   generateCorrelationId(): string {
-    // Use the global function to avoid recursion
-    const id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-      const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
-    });
-    return id;
+    return generateCorrelationId();
   }
 
   /**
@@ -278,35 +218,35 @@ export class SecureLogger {
    * Enhanced detection for IP addresses, content, and PII
    */
   private isSensitiveValue(value: unknown): boolean {
-    if (typeof value !== 'string') return false;
+    if (typeof value !== "string") return false;
     
     const str = value.toLowerCase();
     
     // IP Address patterns (IPv4 and IPv6)
     const ipPatterns = [
-      /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/, // IPv4
-      /^(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}$/i, // IPv6 short
-      /^::ffff:(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/ // IPv4-mapped IPv6
+      /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/,
+      /^(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}$/i,
+      /^::ffff:(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/
     ];
     
     // Content patterns that might contain sensitive information
     const contentPatterns = [
-      /^[A-F0-9]{32,}$/i, // Hex strings (possible keys, hashes)
-      /^[GB][A-Z0-9]{55}$/i, // Stellar addresses
-      /^[A-Z0-9]{43}$/i, // Possible base64 encoded data
-      /^[0-9a-f]{64}$/i, // 256-bit hash
-      /^sk_[a-zA-Z0-9]{48,}$/i, // Secret keys
-      /^[a-f0-9]{128}$/i, // 512-bit hash
-      /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/, // Email addresses
-      /^\+?[1-9]\d{1,14}$/, // Phone numbers (E.164 format)
-      /^[A-F0-9]{40}$/i, // Ethereum addresses
-      /^[1-9A-HJ-NP-Za-km-z]{32,44}$/, // Bitcoin-like addresses
+      /^[A-F0-9]{32,}$/i,
+      /^[GB][A-Z0-9]{55}$/i,
+      /^[A-Z0-9]{43}$/i,
+      /^[0-9a-f]{64}$/i,
+      /^sk_[a-zA-Z0-9]{48,}$/i,
+      /^[a-f0-9]{128}$/i,
+      /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
+      /^\+?[1-9]\d{1,14}$/,
+      /^[A-F0-9]{40}$/i,
+      /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
     ];
     
     // Check for message content indicators
     const messageIndicators = [
-      'hello', 'hi', 'hey', 'bye', 'thank', 'please', 'sorry', 'yes', 'no',
-      'how are', 'what is', 'where is', 'when is', 'why is', 'who is'
+      "hello", "hi", "hey", "bye", "thank", "please", "sorry", "yes", "no",
+      "how are", "what is", "where is", "when is", "why is", "who is"
     ];
     
     // Check IP patterns
@@ -319,14 +259,14 @@ export class SecureLogger {
       return true;
     }
     
-    // Check for message-like content (longer than 10 chars and contains conversation words)
+    // Check for message-like content
     if (str.length > 10 && messageIndicators.some(indicator => str.includes(indicator))) {
       return true;
     }
     
-    // Check for potential metadata (JSON-like structures with sensitive keys)
-    if (str.includes('{') && str.includes('}') && 
-        (str.includes('password') || str.includes('token') || str.includes('secret'))) {
+    // Check for potential metadata
+    if (str.includes("{") && str.includes("}") && 
+        (str.includes("password") || str.includes("token") || str.includes("secret"))) {
       return true;
     }
     
@@ -341,7 +281,7 @@ export class SecureLogger {
       return obj;
     }
 
-    if (typeof obj === 'string') {
+    if (typeof obj === "string") {
       if (this.isSensitiveValue(obj)) {
         return this.config.redactionChar.repeat(Math.min(obj.length, 8));
       }
@@ -352,7 +292,7 @@ export class SecureLogger {
       return obj.map(item => this.redactSensitiveData(item));
     }
 
-    if (typeof obj === 'object' && obj !== null) {
+    if (typeof obj === "object" && obj !== null) {
       const redacted: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(obj)) {
         if (this.isSensitiveField(key)) {
@@ -380,25 +320,23 @@ export class SecureLogger {
       ? this.redactSensitiveData(context) as LogContext
       : context;
 
-    const entry: StandardLogFormat = {
+    return {
       timestamp: new Date().toISOString(),
       level,
       event,
-      correlationId: correlationId || this.generateCorrelationId(),
+      correlationId: correlationId ?? this.generateCorrelationId(),
       service: this.config.serviceName,
       version: this.config.serviceVersion,
       context: sanitizedContext,
       sanitized: this.config.enableSanitization
     };
-
-    return entry;
   }
 
   /**
    * Check if the log level should be processed
    */
   private shouldLog(level: LogLevel): boolean {
-    const levels: LogLevel[] = ['debug', 'info', 'warn', 'error'];
+    const levels: readonly LogLevel[] = ["debug", "info", "warn", "error"];
     const currentLevelIndex = levels.indexOf(this.config.level);
     const logLevelIndex = levels.indexOf(level);
     return logLevelIndex >= currentLevelIndex;
@@ -411,11 +349,14 @@ export class SecureLogger {
     // Check log size limits
     const logSize = JSON.stringify(entry).length;
     if (this.config.maxLogSize && logSize > this.config.maxLogSize) {
-      // Truncate large logs
-      entry.context = {
-        ...entry.context,
-        truncated: true,
-        originalSize: logSize
+      // Create a new entry with truncated context
+      entry = {
+        ...entry,
+        context: {
+          ...entry.context,
+          truncated: true,
+          originalSize: logSize
+        }
       };
     }
 
@@ -425,14 +366,17 @@ export class SecureLogger {
     // Console output
     if (this.config.enableConsoleOutput) {
       switch (entry.level) {
-        case 'debug':
-        case 'info':
+        case "debug":
+        case "info":
+          // eslint-disable-next-line no-console
           console.log(logMessage, logData);
           break;
-        case 'warn':
+        case "warn":
+          // eslint-disable-next-line no-console
           console.warn(logMessage, logData);
           break;
-        case 'error':
+        case "error":
+          // eslint-disable-next-line no-console
           console.error(logMessage, logData);
           break;
       }
@@ -445,12 +389,12 @@ export class SecureLogger {
 
     // Remote logging with batch processing
     if (this.config.enableRemoteLogging && this.config.remoteConfig) {
-      this.logBatch.push(entry);
+      this.logBatch = [...this.logBatch, entry];
       
       // Auto-flush if batch size is reached
-      const batchSize = this.config.remoteConfig.batchSize || 100;
+      const batchSize = this.config.remoteConfig.batchSize ?? 100;
       if (this.logBatch.length >= batchSize) {
-        this.flushLogBatch();
+        void this.flushLogBatch();
       }
     }
   }
@@ -459,8 +403,8 @@ export class SecureLogger {
    * Log debug information
    */
   debug(event: string, context: LogContext = {}, correlationId?: string): void {
-    if (!this.shouldLog('debug')) return;
-    const entry = this.createLogEntry('debug', event, context, correlationId);
+    if (!this.shouldLog("debug")) return;
+    const entry = this.createLogEntry("debug", event, context, correlationId);
     this.output(entry);
   }
 
@@ -468,8 +412,8 @@ export class SecureLogger {
    * Log informational events
    */
   info(event: string, context: LogContext = {}, correlationId?: string): void {
-    if (!this.shouldLog('info')) return;
-    const entry = this.createLogEntry('info', event, context, correlationId);
+    if (!this.shouldLog("info")) return;
+    const entry = this.createLogEntry("info", event, context, correlationId);
     this.output(entry);
   }
 
@@ -477,8 +421,8 @@ export class SecureLogger {
    * Log warning events
    */
   warn(event: string, context: LogContext = {}, correlationId?: string): void {
-    if (!this.shouldLog('warn')) return;
-    const entry = this.createLogEntry('warn', event, context, correlationId);
+    if (!this.shouldLog("warn")) return;
+    const entry = this.createLogEntry("warn", event, context, correlationId);
     this.output(entry);
   }
 
@@ -486,8 +430,8 @@ export class SecureLogger {
    * Log error events
    */
   error(event: string, context: LogContext = {}, correlationId?: string): void {
-    if (!this.shouldLog('error')) return;
-    const entry = this.createLogEntry('error', event, context, correlationId);
+    if (!this.shouldLog("error")) return;
+    const entry = this.createLogEntry("error", event, context, correlationId);
     this.output(entry);
   }
 
@@ -501,7 +445,7 @@ export class SecureLogger {
     duration: number,
     context: LogContext = {}
   ): void {
-    const level = statusCode >= 400 ? 'error' : statusCode >= 300 ? 'warn' : 'info';
+    const level = statusCode >= 400 ? "error" : statusCode >= 300 ? "warn" : "info";
     this[level](`API ${method} ${path}`, {
       ...context,
       statusCode,
@@ -517,7 +461,7 @@ export class SecureLogger {
     success: boolean,
     context: LogContext = {}
   ): void {
-    const level = success ? 'info' : 'warn';
+    const level = success ? "info" : "warn";
     this[level](`Auth ${action}`, {
       ...context,
       success
@@ -547,7 +491,7 @@ export class SecureLogger {
     success: boolean,
     context: LogContext = {}
   ): void {
-    const level = success ? 'info' : 'error';
+    const level = success ? "info" : "error";
     this[level](`Database ${operation} on ${table}`, {
       ...context,
       table,
@@ -557,10 +501,69 @@ export class SecureLogger {
   }
 
   /**
+   * Flush log batch to remote logging service
+   */
+  private async flushLogBatch(): Promise<void> {
+    if (this.logBatch.length === 0 || !this.config.remoteConfig) return;
+
+    const batchToSend = [...this.logBatch];
+    this.logBatch = [];
+
+    try {
+      await this.sendToRemoteService(batchToSend);
+    } catch (error) {
+      // Retry logic
+      const retries = this.config.remoteConfig.retryAttempts ?? 3;
+      for (let i = 0; i < retries; i++) {
+        try {
+          await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+          await this.sendToRemoteService(batchToSend);
+          break;
+        } catch {
+          if (i === retries - 1) {
+            // Final retry failed, add back to batch
+            this.logBatch = [...batchToSend, ...this.logBatch];
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Send logs to remote logging service
+   */
+  private async sendToRemoteService(logs: readonly StandardLogFormat[]): Promise<void> {
+    if (!this.config.remoteConfig) return;
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    if (this.config.remoteConfig.apiKey) {
+      headers["Authorization"] = `Bearer ${this.config.remoteConfig.apiKey}`;
+    }
+
+    const response = await fetch(this.config.remoteConfig.endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        logs,
+        service: this.config.serviceName,
+        version: this.config.serviceVersion,
+        timestamp: new Date().toISOString()
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Remote logging failed: ${response.status} ${response.statusText}`);
+    }
+  }
+
+  /**
    * Clean up resources and flush remaining logs
    */
   async cleanup(): Promise<void> {
-    if (this.batchTimer) {
+    if (this.batchTimer !== undefined) {
       clearInterval(this.batchTimer);
       this.batchTimer = undefined;
     }
@@ -572,23 +575,23 @@ export class SecureLogger {
   /**
    * Validate logging configuration for compliance
    */
-  validateConfig(): { valid: boolean; issues: string[] } {
+  validateConfig(): { readonly valid: boolean; readonly issues: readonly string[] } {
     const issues: string[] = [];
     
     if (!this.config.enableSanitization) {
-      issues.push('Sanitization is disabled - sensitive data may be logged');
+      issues.push("Sanitization is disabled - sensitive data may be logged");
     }
     
-    if (this.config.level === 'debug' && this.config.enableRemoteLogging) {
-      issues.push('Debug logging with remote logging may expose sensitive information');
+    if (this.config.level === "debug" && this.config.enableRemoteLogging) {
+      issues.push("Debug logging with remote logging may expose sensitive information");
     }
     
-    if (!this.config.sensitiveFields.includes('ip') || !this.config.sensitiveFields.includes('message')) {
-      issues.push('Critical sensitive fields (IP, message) not in filter list');
+    if (!this.config.sensitiveFields.includes("ip") || !this.config.sensitiveFields.includes("message")) {
+      issues.push("Critical sensitive fields (IP, message) not in filter list");
     }
     
     if (this.config.remoteConfig && !this.config.remoteConfig.endpoint) {
-      issues.push('Remote logging enabled but no endpoint configured');
+      issues.push("Remote logging enabled but no endpoint configured");
     }
     
     return {
@@ -636,7 +639,7 @@ export const logUtils = {
     } catch (error: unknown) {
       const duration = Date.now() - startTime;
       const errorInfo: LogError = {
-        type: error instanceof Error ? error.constructor.name : 'Unknown',
+        type: error instanceof Error ? error.constructor.name : "Unknown",
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined
       };
