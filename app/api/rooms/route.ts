@@ -5,6 +5,7 @@ import {
   submitMetadataHash,
   getTransactionExplorerUrl,
 } from "@/lib/blockchain/stellar-service";
+import { submitGroupMemoTransaction } from "@/lib/blockchain/memo-service";
 import { GroupMetadata } from "@/types/blockchain";
 import {
   logBlockchainOperation,
@@ -77,7 +78,6 @@ export async function POST(request: NextRequest) {
     }
 
     const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const createdAt = new Date().toISOString();
 
     // Insert group into database first
     const { data, error } = await supabase
@@ -111,10 +111,7 @@ export async function POST(request: NextRequest) {
     logBlockchainOperation(
       "info",
       "Group created, initiating blockchain submission",
-      {
-        groupId: room.id,
-        metadataHash,
-      },
+      { groupId: room.id, metadataHash },
       correlationId,
     );
 
@@ -146,10 +143,7 @@ export async function POST(request: NextRequest) {
         logBlockchainOperation(
           "info",
           "Room record updated with blockchain info",
-          {
-            groupId: room.id,
-            transactionHash: stellarTxHash,
-          },
+          { groupId: room.id, transactionHash: stellarTxHash },
           correlationId,
         );
       } else {
@@ -166,7 +160,6 @@ export async function POST(request: NextRequest) {
         );
       }
     } catch (blockchainError: any) {
-      // Log error but don't fail the request
       logBlockchainOperation(
         "error",
         "Blockchain submission error",
@@ -176,6 +169,38 @@ export async function POST(request: NextRequest) {
             type: blockchainError.name || "UnknownError",
             message: blockchainError.message || "Unknown error",
           },
+        },
+        correlationId,
+      );
+    }
+
+    // Submit a dedicated group-ID memo transaction and persist the mapping
+    // (non-blocking – failure does not affect room creation)
+    try {
+      const memoResult = await submitGroupMemoTransaction(room.id, max_fee);
+
+      if (memoResult.success && memoResult.transactionHash) {
+        await supabase.from("group_memo_transactions").insert({
+          group_id: room.id,
+          transaction_hash: memoResult.transactionHash,
+          memo_value: memoResult.memoValue,
+          memo_type: memoResult.memoType,
+        });
+
+        logBlockchainOperation(
+          "info",
+          "Group memo transaction recorded",
+          { groupId: room.id, transactionHash: memoResult.transactionHash },
+          correlationId,
+        );
+      }
+    } catch (memoError: any) {
+      logBlockchainOperation(
+        "warn",
+        "Group memo transaction failed (non-fatal)",
+        {
+          groupId: room.id,
+          error: { type: memoError.name, message: memoError.message },
         },
         correlationId,
       );

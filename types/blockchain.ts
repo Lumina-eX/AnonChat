@@ -1,5 +1,48 @@
 // Type definitions for blockchain operations
 
+// ── Memo-linked group ID types ────────────────────────────────────────────────
+
+/**
+ * Represents the mapping between a Stellar transaction and a group ID
+ * stored via the transaction memo field.
+ */
+export interface GroupMemoRecord {
+  /** The AnonChat group / room ID */
+  groupId: string;
+  /** Stellar transaction hash that carries the memo */
+  transactionHash: string;
+  /** The raw memo value embedded in the transaction */
+  memoValue: string;
+  /** Memo type used ("text" | "hash") */
+  memoType: "text" | "hash";
+  /** ISO-8601 timestamp when the record was created */
+  createdAt: string;
+}
+
+/**
+ * Result of a memo-linked transaction submission.
+ */
+export interface MemoTransactionResult {
+  success: boolean;
+  transactionHash?: string;
+  memoValue?: string;
+  memoType?: "text" | "hash";
+  feeCharged?: string;
+  explorerUrl?: string | null;
+  error?: string;
+}
+
+/**
+ * Result of memo validation against a stored record.
+ */
+export interface MemoValidationResult {
+  valid: boolean;
+  groupId?: string;
+  transactionHash?: string;
+  memoValue?: string;
+  reason?: string;
+}
+
 export interface GroupMetadata {
   id: string;
   name: string;
