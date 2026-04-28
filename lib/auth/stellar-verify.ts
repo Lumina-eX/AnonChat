@@ -11,27 +11,61 @@
  * or a Supabase table.
  */
 import * as StellarSdk from "@stellar/stellar-sdk";
+import { getRedisClient } from "@/lib/redis";
 
 // ── Nonce store ───────────────────────────────────────────────────────────────
 // { walletAddress → { nonce, expiresAt } }
-const nonces = new Map<string, { nonce: string; expiresAt: number }>();
-const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const memoryNonces = new Map<string, { nonce: string; expiresAt: number }>();
+const NONCE_TTL_SEC = 5 * 60; // 5 minutes
 
 /** Generates a cryptographically random nonce, stores and returns it. */
-export function generateNonce(walletAddress: string): string {
-  // Use crypto.randomUUID for a high-entropy random value
+export async function generateNonce(walletAddress: string): Promise<string> {
   const nonce = `anonchat:${Date.now()}:${crypto.randomUUID()}`;
-  nonces.set(walletAddress, { nonce, expiresAt: Date.now() + NONCE_TTL_MS });
+  const redis = await getRedisClient();
+
+  if (redis) {
+    const key = `nonce:${walletAddress}`;
+    await redis.set(key, nonce, { EX: NONCE_TTL_SEC });
+    console.log(`[auth] Nonce generated and stored in Redis for ${walletAddress.substring(0, 8)}...`);
+  } else {
+    // Fallback to in-memory if Redis is unavailable
+    memoryNonces.set(walletAddress, {
+      nonce,
+      expiresAt: Date.now() + NONCE_TTL_SEC * 1000,
+    });
+    console.warn(`[auth] Redis unavailable, using in-memory nonce storage for ${walletAddress.substring(0, 8)}...`);
+  }
+
   return nonce;
 }
 
 /** Retrieves the stored nonce for a wallet and validates it hasn't expired. */
-export function consumeNonce(walletAddress: string): string | null {
-  const entry = nonces.get(walletAddress);
-  if (!entry) return null;
-  nonces.delete(walletAddress); // One-time use
-  if (Date.now() > entry.expiresAt) return null;
-  return entry.nonce;
+export async function consumeNonce(walletAddress: string): Promise<string | null> {
+  const redis = await getRedisClient();
+
+  if (redis) {
+    const key = `nonce:${walletAddress}`;
+    const nonce = await redis.get(key);
+    if (nonce) {
+      await redis.del(key); // One-time use
+      console.log(`[auth] Nonce consumed from Redis for ${walletAddress.substring(0, 8)}...`);
+      return nonce;
+    }
+  } else {
+    // Fallback to in-memory
+    const entry = memoryNonces.get(walletAddress);
+    if (entry) {
+      memoryNonces.delete(walletAddress); // One-time use
+      if (Date.now() <= entry.expiresAt) {
+        console.log(`[auth] Nonce consumed from memory for ${walletAddress.substring(0, 8)}...`);
+        return entry.nonce;
+      }
+      console.warn(`[auth] Memory nonce expired for ${walletAddress.substring(0, 8)}...`);
+    }
+  }
+
+  console.warn(`[auth] Nonce not found or expired for ${walletAddress.substring(0, 8)}...`);
+  return null;
 }
 
 // ── Signature verification ────────────────────────────────────────────────────

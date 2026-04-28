@@ -1,8 +1,8 @@
 import type { User } from "@supabase/supabase-js"
 import { validateStellarAddress } from "@/lib/auth/validation"
-import { createClient } from "redis"
+import { getRedisClient } from "@/lib/redis"
 
-type RedisClient = ReturnType<typeof createClient>
+type RedisClient = NonNullable<Awaited<ReturnType<typeof getRedisClient>>>
 
 export type WalletMessageRatePolicy = {
   limit: number
@@ -123,26 +123,8 @@ async function consumeSlidingWindowMemory(
   })
 }
 
-const redisGlobal = globalThis as typeof globalThis & { __walletMsgRateRedis?: RedisClient | null }
-
-async function getRedisClient(): Promise<RedisClient | null> {
-  const url = process.env.REDIS_URL?.trim()
-  if (!url) return null
-
-  if (redisGlobal.__walletMsgRateRedis === undefined) {
-    try {
-      const c = createClient({ url })
-      c.on("error", (err) => {
-        console.error("[wallet-msg-rate-limit] Redis client error:", err)
-      })
-      await c.connect()
-      redisGlobal.__walletMsgRateRedis = c
-    } catch (e) {
-      console.error("[wallet-msg-rate-limit] Redis connect failed, using in-memory store:", e)
-      redisGlobal.__walletMsgRateRedis = null
-    }
-  }
-  return redisGlobal.__walletMsgRateRedis ?? null
+async function getInternalRedisClient(): Promise<RedisClient | null> {
+  return getRedisClient() as Promise<RedisClient | null>
 }
 
 function buildStorageKey(walletKey: string, roomId: string): string {
@@ -165,7 +147,7 @@ export async function checkAndConsumeWalletMessageSlot(
 ): Promise<WalletMessageRateResult> {
   const storageKey = buildStorageKey(walletKey, roomId)
   const windowMs = policy.windowSec * 1000
-  const redis = await getRedisClient()
+  const redis = await getInternalRedisClient()
 
   if (redis) {
     const member = `${Date.now()}:${crypto.randomUUID()}`

@@ -2,14 +2,20 @@ import * as StellarSdk from "@stellar/stellar-sdk";
 import { StellarTransactionResult, StellarTransaction } from "@/types/blockchain";
 import { loadStellarConfig, isConfigured, getExplorerUrl } from "./stellar-config";
 import { logBlockchainOperation, generateCorrelationId } from "./logger";
+import { deriveMemoGroupId, validateMemoGroupId, STELLAR_MEMO_MAX_BYTES } from "./memo";
 
 /**
- * Submits a metadata hash to the Stellar blockchain
- * Uses a self-payment transaction with the hash in the memo field
- * 
- * @param groupId - The group ID for logging purposes
- * @param metadataHash - The SHA-256 hash of group metadata
- * @returns Transaction result with success status and transaction hash
+ * Submits a metadata hash to the Stellar blockchain.
+ *
+ * The Stellar TEXT memo embeds the group's compact identifier (≤28 bytes)
+ * so that every on-chain transaction is traceable back to a specific group.
+ * The metadata hash is stored in the DB for integrity verification; the memo
+ * carries the group reference that can be validated independently on-chain.
+ *
+ * @param groupId      - The room's primary key (used to derive the memo)
+ * @param metadataHash - SHA-256 hash of group metadata (stored in DB)
+ * @param maxFee       - Optional maximum fee in stroops
+ * @returns Transaction result including the memo that was embedded
  */
 export async function submitMetadataHash(
   groupId: string,
@@ -61,9 +67,31 @@ export async function submitMetadataHash(
       ),
     ]);
 
-    // Build transaction with memo containing metadata hash
-    // Truncate hash to 28 bytes if needed (Stellar memo limit)
-    const memoText = metadataHash.substring(0, 28);
+    // Derive the group memo from the room ID (≤28 bytes, "grp_<slug>" format).
+    // This embeds the group reference directly in the on-chain transaction so
+    // it can be validated independently without querying the database.
+    const memoGroupId = deriveMemoGroupId(groupId);
+
+    // Validate the derived memo before building the transaction
+    const memoValidation = validateMemoGroupId(memoGroupId);
+    if (!memoValidation.valid) {
+      logBlockchainOperation("error", "Invalid memo derived for group", {
+        groupId,
+        memoGroupId,
+        reason: memoValidation.reason,
+      }, correlationId);
+      return {
+        success: false,
+        error: `Memo validation failed: ${memoValidation.reason}`,
+      };
+    }
+
+    logBlockchainOperation("info", "Derived group memo for transaction", {
+      groupId,
+      memoGroupId,
+      memoByteLength: Buffer.byteLength(memoGroupId, "utf8"),
+      memoMaxBytes: STELLAR_MEMO_MAX_BYTES,
+    }, correlationId);
 
     const feeToUse = maxFee ? maxFee.toString() : StellarSdk.BASE_FEE;
 
@@ -80,7 +108,9 @@ export async function submitMetadataHash(
           amount: "0.0000001", // Minimal amount
         })
       )
-      .addMemo(StellarSdk.Memo.text(memoText))
+      // Embed the group identifier — not the hash — so the memo is a stable,
+      // human-readable group reference that survives metadata changes.
+      .addMemo(StellarSdk.Memo.text(memoGroupId))
       .setTimeout(30)
       .build();
 
@@ -101,6 +131,7 @@ export async function submitMetadataHash(
     logBlockchainOperation("info", "Blockchain transaction successful", {
       groupId,
       metadataHash,
+      memoGroupId,
       transactionHash: result.hash,
       feeCharged,
       duration,
@@ -111,6 +142,7 @@ export async function submitMetadataHash(
       success: true,
       transactionHash: result.hash,
       feeCharged,
+      memoGroupId,
     };
   } catch (error: any) {
     const duration = Date.now() - startTime;

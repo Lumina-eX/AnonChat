@@ -10,6 +10,7 @@ import {
   logBlockchainOperation,
   generateCorrelationId,
 } from "@/lib/blockchain/logger";
+import { deriveMemoGroupId, memoMatchesGroup } from "@/lib/blockchain/memo";
 
 export async function GET(
   request: NextRequest,
@@ -65,6 +66,8 @@ export async function GET(
         transactionHash: null,
         verified: false,
         explorerUrl: null,
+        memoGroupId: null,
+        memoVerified: false,
       };
 
       return NextResponse.json(response);
@@ -91,16 +94,26 @@ export async function GET(
         transactionHash: room.stellar_tx_hash,
         verified: false,
         explorerUrl: getTransactionExplorerUrl(room.stellar_tx_hash),
+        memoGroupId: null,
+        memoVerified: false,
       };
 
       return NextResponse.json(response);
     }
 
-    // Extract metadata hash from transaction memo
-    const blockchainMetadataHash = transaction.memo;
+    // Extract memo from transaction — this is the group identifier, not the hash
+    const onChainMemo = transaction.memo;
 
-    // Verify that current metadata matches blockchain record
-    const verified = currentMetadataHash === blockchainMetadataHash;
+    // Validate memo integrity: the on-chain memo must match the expected group memo
+    const expectedMemo = deriveMemoGroupId(roomId);
+    const memoVerified = memoMatchesGroup(roomId, onChainMemo);
+
+    // The metadata hash is stored in the DB (room.metadata_hash); the blockchain
+    // memo carries the group ID.  We verify both independently.
+    const blockchainMetadataHash = room.metadata_hash ?? null;
+    const verified = blockchainMetadataHash !== null
+      ? currentMetadataHash === blockchainMetadataHash && memoVerified
+      : memoVerified;
 
     logBlockchainOperation(
       "info",
@@ -109,6 +122,9 @@ export async function GET(
         groupId: roomId,
         currentMetadataHash,
         blockchainMetadataHash,
+        onChainMemo,
+        expectedMemo,
+        memoVerified,
         verified,
       },
       correlationId,
@@ -121,6 +137,8 @@ export async function GET(
       transactionHash: room.stellar_tx_hash,
       verified,
       explorerUrl: getTransactionExplorerUrl(room.stellar_tx_hash),
+      memoGroupId: onChainMemo || null,
+      memoVerified,
     };
 
     return NextResponse.json(response);

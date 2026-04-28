@@ -59,7 +59,7 @@ export default function RootLayout({
 
         {/* toast position */}
 
-        <Toaster position="top-center" />
+        <Toaster position="top-right" />
       </body>
     </html>
   );
