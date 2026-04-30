@@ -4,4 +4,5 @@ export interface Message {
   sender: string;
   timestamp: Date;
   isOwn: boolean;
+  isEncrypted: boolean;
 }

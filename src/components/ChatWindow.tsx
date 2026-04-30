@@ -16,7 +16,7 @@ export const ChatWindow: React.FC<Props> = ({ walletAddress, sdk, onSendToChain 
   useChatSubscription(sdk, addMessage);
 
   const handleSend = useCallback(async (text: string) => {
-    addMessage({ text, sender: walletAddress, isOwn: true });
+    addMessage({ text, sender: walletAddress, isOwn: true, isEncrypted: true });
     try {
       await onSendToChain?.(text);
     } catch (err) {

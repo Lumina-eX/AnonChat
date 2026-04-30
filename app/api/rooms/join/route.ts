@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server"
 import { type NextRequest, NextResponse } from "next/server"
+import { validateInviteCode, incrementInviteUseCount } from "@/lib/groups/invite"
 
 export async function POST(request: NextRequest) {
   try {
@@ -11,30 +12,27 @@ export async function POST(request: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const body = await request.json()
-    let { inviteCode, groupId } = body as { inviteCode?: string; groupId?: string }
-
-    let roomId: string | undefined = groupId
+    const { inviteCode, groupId } = body as { inviteCode?: string; groupId?: string }
 
     if (!inviteCode && !groupId) {
       return NextResponse.json({ error: "inviteCode or groupId is required" }, { status: 400 })
     }
 
+    let roomId: string | undefined = groupId
+    let validatedCode: string | undefined
+
     if (inviteCode) {
-      const { data: invite, error: inviteError } = await supabase
-        .from("invites")
-        .select("room_id, expires_at")
-        .eq("code", inviteCode)
-        .maybeSingle()
+      const validation = await validateInviteCode(supabase, inviteCode)
 
-      if (inviteError) throw inviteError
-      if (!invite) return NextResponse.json({ error: "Invalid invite code" }, { status: 404 })
-
-      // optional expiration check
-      if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
-        return NextResponse.json({ error: "Invite code has expired" }, { status: 410 })
+      if (!validation.valid) {
+        console.warn(
+          `[rooms/join] Invalid invite attempt — user: ${user.id}, code: ${inviteCode}, reason: ${validation.error}`
+        )
+        return NextResponse.json({ error: validation.error }, { status: validation.status })
       }
 
-      roomId = invite.room_id
+      roomId = validation.roomId
+      validatedCode = validation.inviteCode
     }
 
     // verify room exists
@@ -53,6 +51,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ message: "Already a member", success: true })
       }
       throw membershipError
+    }
+
+    if (validatedCode) {
+      await incrementInviteUseCount(supabase, validatedCode)
+      console.info(`[rooms/join] User ${user.id} joined room ${roomId} via invite code ${validatedCode}`)
     }
 
     return NextResponse.json({ success: true, membership: membership?.[0] })

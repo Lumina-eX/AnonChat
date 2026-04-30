@@ -1,5 +1,6 @@
 import {
   FREIGHTER_ID,
+  ALBEDO_ID,
   StellarWalletsKit,
   WalletNetwork,
   FreighterModule,
@@ -8,6 +9,8 @@ import {
   LobstrModule,
   HanaModule,
 } from "@creit.tech/stellar-wallets-kit";
+
+export { FREIGHTER_ID, ALBEDO_ID };
 
 const SELECTED_WALLET_ID = "selectedWalletId";
 const WALLET_CONNECTED = "walletConnected";
@@ -156,3 +159,31 @@ export async function connect(callback?: () => Promise<void>) {
     },
   });
 }
+
+/**
+ * Connects directly to a specific wallet without opening the kit's modal.
+ */
+export async function connectToWallet(walletId: string, callback?: () => Promise<void>) {
+  if (typeof window === "undefined") return;
+
+  const kitInstance = getKit();
+  if (!kitInstance) return;
+
+  try {
+    // Check if wallet is available
+    if (walletId === FREIGHTER_ID) {
+      const freighter = new FreighterModule();
+      const isAvailable = await freighter.isAvailable();
+      if (!isAvailable) {
+        throw new Error("Freighter extension is not installed or enabled.");
+      }
+    }
+
+    await setWallet(walletId);
+    if (callback) await callback();
+  } catch (e: any) {
+    console.error(`Failed to connect to wallet ${walletId}:`, e);
+    throw e;
+  }
+}
+

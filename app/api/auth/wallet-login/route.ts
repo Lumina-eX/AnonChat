@@ -39,9 +39,9 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 2. Consume the nonce (one-time use, expires after 5 min) ────────────
-    const nonce = consumeNonce(walletAddress);
+    const nonce = await consumeNonce(walletAddress);
     if (!nonce) {
-      console.warn(`[wallet-auth] /api/auth/wallet-login nonce not found or expired for wallet: ${walletAddress.substring(0, 8)}...`);
+      console.warn(`[wallet-auth] /api/auth/wallet-login nonce rejection: missing or expired for wallet: ${walletAddress.substring(0, 8)}...`);
       return NextResponse.json(
         { error: "Nonce not found or expired. Request a new nonce." },
         { status: 401 },
