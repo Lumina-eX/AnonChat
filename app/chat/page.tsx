@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 
 import { ChatMessage } from "@/components/chat-message";
+import { RoomListSkeleton } from "@/components/chat-skeleton";
 
 type ChatPreview = {
   id: string;
