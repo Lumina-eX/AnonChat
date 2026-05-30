@@ -1,3 +1,8 @@
+export interface ReadReceipt {
+  userId: string;
+  readAt: Date;
+}
+
 export interface Message {
   id: string;
   text: string;
@@ -5,4 +10,5 @@ export interface Message {
   timestamp: Date;
   isOwn: boolean;
   isEncrypted: boolean;
+  readBy?: ReadReceipt[];
 }

@@ -259,6 +259,17 @@ export class WebSocketClient {
       payload: { messageId, roomId },
       timestamp: Date.now(),
     });
+
+  /**
+   * Mark one or more messages as read in a room.
+   * Sends a batched read receipt via WebSocket for real-time propagation.
+   */
+  markAsRead = (roomId: string, messageIds: string[]) =>
+    this.send({
+      type: "mark_read",
+      payload: { roomId, messageIds },
+      timestamp: Date.now(),
+    });
 }
 
 let instance: WebSocketClient | null = null;

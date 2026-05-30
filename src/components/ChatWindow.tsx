@@ -1,8 +1,10 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
 import { useMessages } from '../hooks/useMessages';
 import { useChatSubscription } from '../hooks/useChatSubscription';
+import { useReadReceipts } from '../hooks/useReadReceipts';
+import { createBrowserClient } from '@supabase/ssr';
 import { Settings } from 'lucide-react'; // Import the toggle icon
 import { GroupSettingsPanel } from './GroupSettingsPanel'; // Import our new panel
 
@@ -20,6 +22,20 @@ export const ChatWindow: React.FC<Props> = ({
   roomId
 }) => {
   const [isPanelOpen, setIsPanelOpen] = useState(false); // State to open/close drawer
+  const [currentUserId, setCurrentUserId] = useState<string | undefined>();
+
+  // Fetch the Supabase user ID for read receipts
+  useEffect(() => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    );
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user) {
+        setCurrentUserId(data.user.id);
+      }
+    });
+  }, []);
 
   const {
     messages,
@@ -30,6 +46,13 @@ export const ChatWindow: React.FC<Props> = ({
   } = useMessages({ roomId, pageSize: 50 });
 
   useChatSubscription(sdk, addMessage);
+
+  // Read receipts — auto-tracks visibility and syncs in real-time
+  const { readReceipts } = useReadReceipts({
+    roomId: roomId || "",
+    messages,
+    currentUserId,
+  });
 
   const handleSend = useCallback(async (text: string) => {
     addMessage({ text, sender: walletAddress, isOwn: true, isEncrypted: true });
@@ -72,6 +95,7 @@ export const ChatWindow: React.FC<Props> = ({
         onLoadMore={loadMoreMessages}
         isLoading={isLoading}
         hasMore={hasMore}
+        readReceipts={readReceipts}
       />
       
       {/* Message Chat Field Box */}

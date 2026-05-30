@@ -2,6 +2,7 @@
 export type WebSocketServerEventType =
   | "message"
   | "message_status_update"
+  | "message_read"
   | "room_join"
   | "room_leave"
   | "user_typing"
@@ -19,6 +20,7 @@ export type WebSocketClientEventType =
   | "leave_room"
   | "send_message"
   | "message_delivered"
+  | "mark_read"
   | "typing"
   | "stop_typing"
   | "wallet_event"
@@ -53,7 +55,14 @@ export interface ChatMessage {
   avatarUrl?: string
   content: string
   createdAt: number
-  status?: "sending" | "sent" | "delivered"
+  status?: "sending" | "sent" | "delivered" | "read"
+}
+
+export interface ReadReceiptPayload {
+  roomId: string
+  messageIds: string[]
+  userId: string
+  readAt: number
 }
 
 export interface RoomMember {

@@ -175,5 +175,12 @@ export function useWebSocketSend() {
     markAsDelivered: useCallback((messageId: string, roomId: string) => {
       client.current.markAsDelivered(messageId, roomId);
     }, []),
+    /**
+     * Mark one or more messages as read in a room.
+     * Batched for efficiency — accepts an array of message IDs.
+     */
+    markAsRead: useCallback((roomId: string, messageIds: string[]) => {
+      client.current.markAsRead(roomId, messageIds);
+    }, []),
   };
 }

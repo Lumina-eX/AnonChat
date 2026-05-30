@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { Message } from '../types/message';
+import { Message, ReadReceipt } from '../types/message';
 import { MessageItem } from '@/components/MessageItem';
 
 interface Props {
@@ -9,6 +9,7 @@ interface Props {
   isLoadingMore?: boolean;
   hasMore?: boolean;
   firstMessageId?: string | null;
+  readReceipts?: Map<string, ReadReceipt[]>;
 }
 
 export const MessageList: React.FC<Props> = ({
@@ -18,6 +19,7 @@ export const MessageList: React.FC<Props> = ({
   isLoadingMore = false,
   hasMore = false,
   firstMessageId,
+  readReceipts,
 }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -128,7 +130,7 @@ export const MessageList: React.FC<Props> = ({
           ref={index === 0 ? firstMessageRef : undefined}
           data-message-id={msg.id}
         >
-          <MessageItem message={msg} />
+          <MessageItem message={msg} readReceipts={readReceipts?.get(msg.id)} />
         </div>
       ))}
       

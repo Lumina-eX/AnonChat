@@ -12,7 +12,7 @@ interface RealtimeMessageUpdate {
   displayName: string
   content: string
   createdAt: number
-  status: "sending" | "sent" | "delivered"
+  status: "sending" | "sent" | "delivered" | "read"
 }
 
 export interface TypingIndicator {
