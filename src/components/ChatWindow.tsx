@@ -3,10 +3,8 @@ import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
 import { useMessages } from '../hooks/useMessages';
 import { useChatSubscription } from '../hooks/useChatSubscription';
-import { useReadReceipts } from '../hooks/useReadReceipts';
-import { createBrowserClient } from '@supabase/ssr';
-import { Settings } from 'lucide-react'; // Import the toggle icon
-import { GroupSettingsPanel } from './GroupSettingsPanel'; // Import our new panel
+import { Settings } from 'lucide-react';
+import { GroupSettingsPanel } from './GroupSettingsPanel';
 
 interface Props {
   walletAddress: string;
@@ -21,28 +19,16 @@ export const ChatWindow: React.FC<Props> = ({
   onSendToChain,
   roomId
 }) => {
-  const [isPanelOpen, setIsPanelOpen] = useState(false); // State to open/close drawer
-  const [currentUserId, setCurrentUserId] = useState<string | undefined>();
-
-  // Fetch the Supabase user ID for read receipts
-  useEffect(() => {
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    );
-    supabase.auth.getUser().then(({ data }) => {
-      if (data.user) {
-        setCurrentUserId(data.user.id);
-      }
-    });
-  }, []);
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
 
   const {
     messages,
     addMessage,
     loadMoreMessages,
     isLoading,
-    hasMore
+    isLoadingMore,
+    hasMore,
+    firstMessageId,
   } = useMessages({ roomId, pageSize: 50 });
 
   useChatSubscription(sdk, addMessage);
@@ -63,13 +49,10 @@ export const ChatWindow: React.FC<Props> = ({
     }
   }, [addMessage, walletAddress, onSendToChain]);
 
-  // Derive a dynamic presentation room name or fall back cleanly
-  const currentRoomName = roomId ? `Room: ${roomId.substring(0, 8)}...` : "Main Anonymous Chat";
+  const currentRoomName = roomId ? `Room: ${roomId.substring(0, 8)}...` : 'Main Anonymous Chat';
 
   return (
     <div className='flex flex-col h-full bg-gray-950 text-gray-100 relative overflow-hidden'>
-      
-      {/* Dynamic Group Top Header Block */}
       <div className="w-full h-14 bg-gray-900 border-b border-gray-800 px-6 flex items-center justify-between shadow-sm shrink-0">
         <div className="flex flex-col">
           <span className="font-bold text-sm tracking-wide text-gray-100">{currentRoomName}</span>
@@ -78,8 +61,6 @@ export const ChatWindow: React.FC<Props> = ({
             End-to-End Encrypted
           </span>
         </div>
-        
-        {/* Info/Settings Action Trigger */}
         <button
           onClick={() => setIsPanelOpen(true)}
           className="p-2 bg-gray-800/40 hover:bg-gray-800 border border-gray-800 hover:border-gray-700 text-gray-400 hover:text-purple-400 rounded-xl transition-all shadow-sm group"
@@ -89,20 +70,18 @@ export const ChatWindow: React.FC<Props> = ({
         </button>
       </div>
 
-      {/* Messages Feed View Container */}
       <MessageList
         messages={messages}
         onLoadMore={loadMoreMessages}
         isLoading={isLoading}
+        isLoadingMore={isLoadingMore}
         hasMore={hasMore}
-        readReceipts={readReceipts}
+        firstMessageId={firstMessageId}
       />
-      
-      {/* Message Chat Field Box */}
+
       <MessageInput onSend={handleSend} />
 
-      {/* Embedded Group Settings Slide Drawer Component */}
-      <GroupSettingsPanel 
+      <GroupSettingsPanel
         isOpen={isPanelOpen}
         onClose={() => setIsPanelOpen(false)}
         roomName={currentRoomName}

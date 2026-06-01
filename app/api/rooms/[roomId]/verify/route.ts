@@ -41,6 +41,7 @@ export async function GET(
       created_by: room.created_by,
       created_at: room.created_at,
       is_private: room.is_private,
+      owner_wallet: room.owner_wallet ?? null,
     };
 
     // Compute current metadata hash

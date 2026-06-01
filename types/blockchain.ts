@@ -7,6 +7,7 @@ export interface GroupMetadata {
   created_by: string;
   created_at: string;
   is_private: boolean;
+  owner_wallet?: string | null;
 }
 
 export interface StellarTransactionResult {
@@ -15,8 +16,16 @@ export interface StellarTransactionResult {
   feeCharged?: string;
   /** The group memo embedded in the Stellar transaction (≤28 bytes). */
   memoGroupId?: string;
+  /** The audit memo embedded in the Stellar transaction (≤28 bytes). */
+  auditMemo?: string;
   error?: string;
 }
+
+export type AuditEventType =
+  | "group_created"
+  | "member_joined"
+  | "member_left"
+  | "member_removed";
 
 export interface StellarTransaction {
   hash: string;
@@ -46,6 +55,7 @@ export interface GroupCreationResponse {
     is_private: boolean;
     created_by: string;
     created_at: string;
+    owner_wallet?: string | null;
     stellar_tx_hash: string | null;
     metadata_hash?: string | null;
     blockchain_submitted_at?: string | null;

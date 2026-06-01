@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server"
+import { recordGroupAuditEvent } from "@/lib/blockchain/audit"
 import {
   checkAndConsumeWalletMessageSlot,
   formatRateLimitWindow,
@@ -159,11 +160,27 @@ export async function POST(request: NextRequest) {
     }
 
     if (!membership) {
-      const { error: insertMemberErr } = await supabase.from("room_members").insert({
-        room_id,
-        user_id: user.id,
-      })
+      const { data: insertedMembership, error: insertMemberErr } = await supabase
+        .from("room_members")
+        .insert({
+          room_id,
+          user_id: user.id,
+        })
+        .select("id")
+        .single()
       if (insertMemberErr) throw insertMemberErr
+
+      await recordGroupAuditEvent({
+        supabase,
+        groupId: room_id,
+        eventType: "member_joined",
+        actorUserId: user.id,
+        targetUserId: user.id,
+        metadata: {
+          membership_id: insertedMembership?.id ?? null,
+          source: "message_send_auto_join",
+        },
+      })
     }
 
     const { data, error } = await supabase

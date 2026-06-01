@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server"
 import { type NextRequest, NextResponse } from "next/server"
-import { insertRoomActivity } from "@/lib/activity/room-activity"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import { recordGroupAuditEvent } from "@/lib/blockchain/audit"
 
 export async function POST(
   request: NextRequest,
@@ -97,25 +96,24 @@ export async function POST(
       )
     }
 
-    if (removed) {
-      // Best-effort: log that the target user left (was removed)
-      try {
-        await insertRoomActivity(supabase as unknown as SupabaseClient, {
-          room_id: roomId,
-          event_type: "user_left",
-          actor_user_id: user.id,
-          target_user_id,
-          metadata: { reason: "removed_by_vote" },
+    const auditEvent = removed
+      ? await recordGroupAuditEvent({
+          supabase,
+          groupId: roomId,
+          eventType: "member_removed",
+          actorUserId: user.id,
+          targetUserId: target_user_id,
+          metadata: {
+            removal_reason: "membership_vote_threshold",
+          },
         })
-      } catch (e) {
-        console.warn("[activity] failed to insert user_left log", e)
-      }
-    }
+      : null
 
     return NextResponse.json({
       vote_recorded: true,
       removed: Boolean(removed),
       message: removed ? "User has been removed from the room" : "Vote recorded",
+      audit: auditEvent ?? undefined,
     }, { status: 201 })
   } catch (error) {
     console.error("[vote-remove] error:", error)

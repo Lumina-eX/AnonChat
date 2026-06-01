@@ -1,170 +1,188 @@
-import { createAdminClient, createClient } from "@/lib/supabase/server"
-import { type NextRequest, NextResponse } from "next/server"
+import { type NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { consumeNonce, verifyWalletSignature } from "@/lib/auth/stellar-verify";
+import { validateRequiredFields, validateStellarAddress } from "@/lib/auth/validation";
+import { resolveRoomOwnerWallet } from "@/lib/auth/wallet-owner";
+import { computeHash } from "@/lib/blockchain/metadata-hash";
+import { submitMetadataHash, getTransactionExplorerUrl } from "@/lib/blockchain/stellar-service";
+import { GroupMetadata } from "@/types/blockchain";
 
-const ROOM_CHILD_TABLES = [
-  { table: "messages", column: "room_id" },
-  { table: "room_removal_votes", column: "room_id" },
-  { table: "encrypted_file_references", column: "room_id" },
-  { table: "invites", column: "room_id" },
-  { table: "group_membership", column: "group_id" },
-  { table: "room_members", column: "room_id" },
-] as const
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ roomId: string }> },
+) {
+  const { roomId } = await params;
 
-type SupabaseError = {
-  code?: string
-  message?: string
-}
+  try {
+    const supabase = await createClient();
+    const { data: room, error } = await supabase
+      .from("rooms")
+      .select("*")
+      .eq("id", roomId)
+      .single();
 
-type DeleteRoomResult = {
-  deleted_room_id?: string
-  deleted_messages?: number
-  deleted_room_members?: number
-  deleted_room_removal_votes?: number
-  deleted_group_memberships?: number
-  deleted_invites?: number
-  deleted_file_references?: number
-}
-
-function isMissingRelationError(error: SupabaseError) {
-  return error.code === "42P01" || error.message?.includes("does not exist")
-}
-
-function isMissingFunctionError(error: SupabaseError) {
-  return error.code === "42883" || error.code === "PGRST202"
-}
-
-async function deleteRoomWithAdminClient(roomId: string, userId: string) {
-  const adminSupabase = createAdminClient()
-
-  const { data: room, error: roomError } = await adminSupabase
-    .from("rooms")
-    .select("id, created_by")
-    .eq("id", roomId)
-    .maybeSingle()
-
-  if (roomError) {
-    console.error("[rooms/delete] room lookup error:", roomError)
-    return NextResponse.json({ error: "Failed to verify room ownership" }, { status: 500 })
-  }
-
-  if (!room) {
-    return NextResponse.json({ error: "Room not found" }, { status: 404 })
-  }
-
-  if (room.created_by !== userId) {
-    return NextResponse.json(
-      { error: "Forbidden. Only the group owner can delete this group." },
-      { status: 403 }
-    )
-  }
-
-  const cleanupCounts: Record<string, number> = {}
-
-  for (const { table, column } of ROOM_CHILD_TABLES) {
-    const { count, error } = await adminSupabase
-      .from(table)
-      .delete({ count: "exact" })
-      .eq(column, roomId)
-
-    if (error) {
-      if (isMissingRelationError(error)) {
-        console.warn(`[rooms/delete] skipping missing cleanup table ${table}:`, error.message)
-        cleanupCounts[table] = 0
-        continue
-      }
-
-      console.error(`[rooms/delete] failed to clean up ${table}:`, error)
-      return NextResponse.json(
-        { error: `Failed to clean up related ${table.replaceAll("_", " ")}` },
-        { status: 500 }
-      )
+    if (error || !room) {
+      return NextResponse.json({ error: "Room not found" }, { status: 404 });
     }
 
-    cleanupCounts[table] = count ?? 0
+    return NextResponse.json({ room }, { status: 200 });
+  } catch (error) {
+    console.error("[rooms/[roomId]] GET error:", error);
+    return NextResponse.json({ error: "Failed to fetch room" }, { status: 500 });
   }
-
-  const { error: deleteError } = await adminSupabase.from("rooms").delete().eq("id", roomId)
-
-  if (deleteError) {
-    console.error("[rooms/delete] room deletion error:", deleteError)
-    return NextResponse.json({ error: "Failed to delete room" }, { status: 500 })
-  }
-
-  return NextResponse.json({
-    success: true,
-    deleted_room_id: roomId,
-    cleanup: cleanupCounts,
-    message: "Group deleted successfully",
-  })
 }
 
-export async function DELETE(
-  _request: NextRequest,
-  { params }: { params: Promise<{ roomId: string }> }
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ roomId: string }> },
 ) {
+  const { roomId } = await params;
+
   try {
-    const supabase = await createClient()
+    const supabase = await createClient();
     const {
       data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError) {
-      console.error("[rooms/delete] auth error:", authError)
-      return NextResponse.json({ error: "Unable to verify authentication" }, { status: 401 })
-    }
-
+    } = await supabase.auth.getUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { roomId } = await params
-    if (!roomId) {
-      return NextResponse.json({ error: "roomId is required" }, { status: 400 })
+    const body = await request.json();
+    const { walletAddress, signature, name, description, is_private } = body ?? {};
+
+    const errors = validateRequiredFields(body ?? {}, ["walletAddress", "signature"]);
+    if (errors.length > 0) {
+      return NextResponse.json(
+        { error: errors.map((error) => error.message).join(", ") },
+        { status: 400 },
+      );
     }
 
-    const { data, error } = await supabase
-      .rpc("delete_room_as_owner", { p_room_id: roomId })
-      .maybeSingle()
-
-    if (error) {
-      if (error.code === "P0002") {
-        return NextResponse.json({ error: "Room not found" }, { status: 404 })
-      }
-
-      if (error.code === "42501") {
-        return NextResponse.json(
-          { error: "Forbidden. Only the group owner can delete this group." },
-          { status: 403 }
-        )
-      }
-
-      if (!isMissingFunctionError(error)) {
-        console.error("[rooms/delete] transactional delete error:", error)
-        return NextResponse.json({ error: "Failed to delete group" }, { status: 500 })
-      }
-
-      console.warn("[rooms/delete] delete_room_as_owner RPC unavailable; using API fallback")
-      return deleteRoomWithAdminClient(roomId, user.id)
+    if (!validateStellarAddress(walletAddress)) {
+      return NextResponse.json({ error: "Invalid wallet address" }, { status: 400 });
     }
 
-    const result = data as DeleteRoomResult | null
+    const { data: room, error: roomError } = await supabase
+      .from("rooms")
+      .select("id, name, description, is_private, created_by, owner_wallet, stellar_tx_hash, metadata_hash, memo_group_id")
+      .eq("id", roomId)
+      .single();
 
-    return NextResponse.json({
-      success: true,
-      deleted_room_id: result?.deleted_room_id ?? roomId,
-      cleanup: {
-        messages: result?.deleted_messages ?? 0,
-        room_removal_votes: result?.deleted_room_removal_votes ?? 0,
-        encrypted_file_references: result?.deleted_file_references ?? 0,
-        invites: result?.deleted_invites ?? 0,
-        group_membership: result?.deleted_group_memberships ?? 0,
-        room_members: result?.deleted_room_members ?? 0,
+    if (roomError || !room) {
+      return NextResponse.json({ error: "Room not found" }, { status: 404 });
+    }
+
+    const ownerWallet = await resolveRoomOwnerWallet(supabase, room);
+    if (!ownerWallet) {
+      return NextResponse.json({ error: "Cannot resolve room owner wallet" }, { status: 400 });
+    }
+
+    if (ownerWallet !== walletAddress) {
+      return NextResponse.json({ error: "Unauthorized: wallet does not own this room" }, { status: 403 });
+    }
+
+    const nonce = await consumeNonce(walletAddress);
+    if (!nonce) {
+      return NextResponse.json(
+        { error: "Nonce not found or expired. Request a new nonce." },
+        { status: 401 },
+      );
+    }
+
+    const isValidSignature = verifyWalletSignature(walletAddress, nonce, signature);
+    if (!isValidSignature) {
+      return NextResponse.json({ error: "Signature verification failed" }, { status: 401 });
+    }
+
+    const updates: Record<string, unknown> = {};
+    if (typeof name === "string" && name.trim().length > 0) {
+      updates.name = name.trim();
+    }
+    if (typeof description === "string") {
+      updates.description = description.trim();
+    }
+    if (typeof is_private === "boolean") {
+      updates.is_private = is_private;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ error: "No valid update fields provided" }, { status: 400 });
+    }
+
+    const { data: updatedRoom, error: updateError } = await supabase
+      .from("rooms")
+      .update(updates)
+      .eq("id", roomId)
+      .select()
+      .single();
+
+    if (updateError || !updatedRoom) {
+      throw updateError || new Error("Failed to update room");
+    }
+
+    const metadata: GroupMetadata = {
+      id: updatedRoom.id,
+      name: updatedRoom.name,
+      description: updatedRoom.description,
+      created_by: updatedRoom.created_by,
+      created_at: updatedRoom.created_at,
+      is_private: updatedRoom.is_private,
+      owner_wallet: ownerWallet,
+    };
+
+    const currentMetadataHash = computeHash(metadata);
+    let stellarTxHash = updatedRoom.stellar_tx_hash ?? null;
+    let metadataHash = updatedRoom.metadata_hash ?? null;
+    let memoGroupId = updatedRoom.memo_group_id ?? null;
+    let blockchainSubmitted = false;
+    let explorerUrl: string | null = null;
+    let actualFeeCharged: string | null = null;
+
+    try {
+      const result = await submitMetadataHash(roomId, currentMetadataHash);
+      if (result.success && result.transactionHash) {
+        stellarTxHash = result.transactionHash;
+        metadataHash = currentMetadataHash;
+        actualFeeCharged = result.feeCharged || null;
+        blockchainSubmitted = true;
+        explorerUrl = getTransactionExplorerUrl(result.transactionHash);
+        memoGroupId = result.memoGroupId ?? null;
+
+        await supabase
+          .from("rooms")
+          .update({
+            stellar_tx_hash: stellarTxHash,
+            metadata_hash: metadataHash,
+            blockchain_submitted_at: new Date().toISOString(),
+            memo_group_id: result.memoGroupId ?? null,
+          })
+          .eq("id", roomId);
+      }
+    } catch (blockchainError: any) {
+      console.error("[rooms/[roomId]] PATCH blockchain submission error:", blockchainError);
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        room: {
+          ...updatedRoom,
+          stellar_tx_hash: stellarTxHash,
+          metadata_hash: metadataHash,
+          memo_group_id: memoGroupId,
+        },
+        blockchain: {
+          submitted: blockchainSubmitted,
+          transactionHash: stellarTxHash || undefined,
+          feeCharged: actualFeeCharged || undefined,
+          explorerUrl: explorerUrl || undefined,
+          memoGroupId: memoGroupId || undefined,
+        },
       },
-      message: "Group deleted successfully",
-    })
+      { status: 200 },
+    );
   } catch (error) {
-    console.error("[rooms/delete] unexpected error:", error)
-    return NextResponse.json({ error: "Failed to delete group" }, { status: 500 })
+    console.error("[rooms/[roomId]] PATCH error:", error);
+    return NextResponse.json({ error: "Failed to update room" }, { status: 500 });
   }
 }

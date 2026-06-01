@@ -4,6 +4,7 @@ export type RoomActivityEventType =
   | "group_created"
   | "user_joined"
   | "user_left"
+  | "ownership_transferred"
 
 export interface RoomActivityInsert {
   room_id: string

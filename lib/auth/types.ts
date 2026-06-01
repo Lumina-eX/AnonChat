@@ -68,3 +68,26 @@ export interface ErrorResponse {
   /** Human-readable error message */
   error: string;
 }
+/**
+ * Request body for routes protected by signed message verification middleware.
+ * Used with verifySignedMessage() from signed-message-middleware.ts
+ */
+export interface SignedActionRequest {
+  /** Stellar public key (56 characters, starts with 'G') */
+  walletAddress: string;
+  /** The plaintext message that was signed */
+  message: string;
+  /** Hex-encoded Ed25519 signature of the message */
+  signature: string;
+}
+
+/**
+ * Audit log entry shape for sensitive actions
+ */
+export interface AuditLogEntry {
+  audit: true;
+  action: string;
+  wallet: string;
+  timestamp: string;
+  [key: string]: unknown;
+}

@@ -1,62 +1,84 @@
-import { createClient } from "@/lib/supabase/server"
-import { type NextRequest, NextResponse } from "next/server"
-import { validateInviteCode, incrementInviteUseCount } from "@/lib/groups/invite"
-import { insertRoomActivity } from "@/lib/activity/room-activity"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import { createClient } from "@/lib/supabase/server";
+import { type NextRequest, NextResponse } from "next/server";
+import {
+  validateInviteCode,
+  incrementInviteUseCount,
+} from "@/lib/groups/invite";
+import { recordGroupAuditEvent } from "@/lib/blockchain/audit";
+import { insertRoomActivity } from "@/lib/activity/room-activity";
+import { type SupabaseClient } from "@supabase/supabase-js";
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
+    const supabase = await createClient();
 
     const {
       data: { user },
-    } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    } = await supabase.auth.getUser();
+    if (!user)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = await request.json()
-    const { inviteCode, groupId } = body as { inviteCode?: string; groupId?: string }
+    const body = await request.json();
+    const { inviteCode, groupId } = body as {
+      inviteCode?: string;
+      groupId?: string;
+    };
 
     if (!inviteCode && !groupId) {
-      return NextResponse.json({ error: "inviteCode or groupId is required" }, { status: 400 })
+      return NextResponse.json(
+        { error: "inviteCode or groupId is required" },
+        { status: 400 },
+      );
     }
 
-    let roomId: string | undefined = groupId
-    let validatedCode: string | undefined
+    let roomId: string | undefined = groupId;
+    let validatedCode: string | undefined;
 
     if (inviteCode) {
-      const validation = await validateInviteCode(supabase, inviteCode)
+      const validation = await validateInviteCode(supabase, inviteCode);
 
       if (!validation.valid) {
         console.warn(
-          `[rooms/join] Invalid invite attempt — user: ${user.id}, code: ${inviteCode}, reason: ${validation.error}`
-        )
-        return NextResponse.json({ error: validation.error }, { status: validation.status })
+          `[rooms/join] Invalid invite attempt — user: ${user.id}, code: ${inviteCode}, reason: ${validation.error}`,
+        );
+        return NextResponse.json(
+          { error: validation.error },
+          { status: validation.status },
+        );
       }
 
-      roomId = validation.roomId
-      validatedCode = validation.inviteCode
+      roomId = validation.roomId;
+      validatedCode = validation.inviteCode;
     }
 
     if (!roomId) {
-      return NextResponse.json({ error: "Room not found" }, { status: 404 })
+      return NextResponse.json({ error: "Room not found" }, { status: 404 });
     }
 
     // verify room exists
-    const { data: room } = await supabase.from("rooms").select("id").eq("id", roomId).maybeSingle()
-    if (!room) return NextResponse.json({ error: "Room not found" }, { status: 404 })
+    const { data: room } = await supabase
+      .from("rooms")
+      .select("id")
+      .eq("id", roomId)
+      .maybeSingle();
+    if (!room)
+      return NextResponse.json({ error: "Room not found" }, { status: 404 });
 
     // insert membership
     const { data: membership, error: membershipError } = await supabase
       .from("room_members")
       .insert({ user_id: user.id, room_id: roomId })
-      .select()
+      .select();
 
     if (membershipError) {
       // unique violation -> already a member
       if (membershipError.code === "23505") {
-        return NextResponse.json({ message: "Already a member", success: true })
+        return NextResponse.json({
+          message: "Already a member",
+          success: true,
+        });
       }
-      throw membershipError
+      throw membershipError;
     }
 
     // Best-effort: log the join event (separate from chat messages)
@@ -66,19 +88,37 @@ export async function POST(request: NextRequest) {
         event_type: "user_joined",
         actor_user_id: user.id,
         metadata: { via: validatedCode ? "invite" : "direct" },
-      })
+      });
     } catch (e) {
-      console.warn("[activity] failed to insert user_joined log", e)
+      console.warn("[activity] failed to insert user_joined log", e);
     }
 
     if (validatedCode) {
-      await incrementInviteUseCount(supabase, validatedCode)
-      console.info(`[rooms/join] User ${user.id} joined room ${roomId} via invite code ${validatedCode}`)
+      await incrementInviteUseCount(supabase, validatedCode);
+      console.info(
+        `[rooms/join] User ${user.id} joined room ${roomId} via invite code ${validatedCode}`,
+      );
     }
 
-    return NextResponse.json({ success: true, membership: membership?.[0] })
+    const auditEvent = await recordGroupAuditEvent({
+      supabase,
+      groupId: roomId as string,
+      eventType: "member_joined",
+      actorUserId: user.id,
+      targetUserId: user.id,
+      metadata: {
+        invite_code_used: validatedCode ?? null,
+        membership_id: membership?.[0]?.id ?? null,
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      membership: membership?.[0],
+      audit: auditEvent ?? undefined,
+    });
   } catch (error) {
-    console.error("POST /api/rooms/join error:", error)
-    return NextResponse.json({ error: "Failed to join room" }, { status: 500 })
+    console.error("POST /api/rooms/join error:", error);
+    return NextResponse.json({ error: "Failed to join room" }, { status: 500 });
   }
 }
