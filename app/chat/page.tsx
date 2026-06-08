@@ -723,29 +723,43 @@ export default function ChatPage() {
                          <div
                            key={message.id}
                            className={cn(
-                             "max-w-[85%] sm:max-w-[72%] rounded-2xl px-4 py-2.5 shadow-sm text-sm",
-                             message.author === "me"
-                               ? "ml-auto bg-primary text-primary-foreground rounded-br-sm"
-                               : "mr-auto bg-card border border-border/70 rounded-bl-sm",
+                             "flex w-full",
+                             message.author === "me" ? "justify-end" : "justify-start",
                            )}
                          >
-                           <p className="whitespace-pre-wrap break-words leading-relaxed">
-                             {highlightText(message.text, messageSearchQuery)}
-                           </p>
-                           <div
-                             className={cn(
-                               "mt-1 flex items-center justify-end gap-1 text-[10px]",
-                               message.author === "me"
-                                 ? "text-primary-foreground/80"
-                                 : "text-muted-foreground",
-                             )}
-                           >
-                             <span>{message.time}</span>
-                             {message.author === "me" && (
-                               <span>
-                                 {message.status === "sending" ? "..." : "✓✓"}
+                           <div className="flex flex-col max-w-[85%] sm:max-w-[72%]">
+                             {message.author !== "me" && (
+                               <span className="text-[10px] text-muted-foreground px-1 mb-0.5">
+                                 Anonymous
                                </span>
                              )}
+                             <div
+                               className={cn(
+                                 "rounded-2xl px-4 py-2.5 shadow-sm text-sm",
+                                 message.author === "me"
+                                   ? "bg-primary text-primary-foreground rounded-br-sm"
+                                   : "bg-card border border-border/70 text-foreground rounded-bl-sm",
+                               )}
+                             >
+                               <p className="whitespace-pre-wrap break-words leading-relaxed">
+                                 {highlightText(message.text, messageSearchQuery)}
+                               </p>
+                             </div>
+                             <div
+                               className={cn(
+                                 "mt-1 flex items-center gap-1 text-[10px] px-1",
+                                 message.author === "me"
+                                   ? "justify-end text-muted-foreground"
+                                   : "justify-start text-muted-foreground",
+                               )}
+                             >
+                               <span>{message.time}</span>
+                               {message.author === "me" && (
+                                 <span>
+                                   {message.status === "sending" ? "⏳" : "✓✓"}
+                                 </span>
+                               )}
+                             </div>
                            </div>
                          </div>
                        ))}
