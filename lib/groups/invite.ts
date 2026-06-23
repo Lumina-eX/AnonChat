@@ -17,6 +17,7 @@ export function buildExpiresAt(expiresIn?: number): string | null {
 /**
  * Validates an invite code and returns the associated room ID on success.
  * Checks: existence, time-based expiry, and usage-based expiry.
+ * Returns specific error information for audit logging.
  */
 export async function validateInviteCode(
   supabase: SupabaseClient,
@@ -52,6 +53,70 @@ export async function validateInviteCode(
   }
 
   return { valid: true, roomId: invite.room_id, inviteCode: invite.code }
+}
+
+/**
+ * Gets detailed expiration status for an invite code.
+ * Used for audit logging and diagnostics.
+ */
+export async function getInviteExpirationStatus(
+  supabase: SupabaseClient,
+  code: string
+): Promise<{
+  isExpired: boolean;
+  isTimeExpired: boolean;
+  isUsageExpired: boolean;
+  timeRemaining: string | null;
+  usesRemaining: number | null;
+  expiresAt: string | null;
+  maxUses: number | null;
+  useCount: number;
+} | null> {
+  const { data: status, error } = await supabase
+    .rpc("get_invite_status", { p_invite_code: code })
+    .maybeSingle()
+
+  if (error || !status) {
+    console.error("[invite] Failed to get invite status:", error)
+    return null
+  }
+
+  return {
+    isExpired: status.is_expired,
+    isTimeExpired: status.is_time_expired,
+    isUsageExpired: status.is_usage_expired,
+    timeRemaining: status.time_remaining,
+    usesRemaining: status.uses_remaining,
+    expiresAt: status.expires_at,
+    maxUses: status.max_uses,
+    useCount: status.use_count,
+  }
+}
+
+/**
+ * Logs an invite expiration event for audit purposes.
+ */
+export async function logInviteExpiration(
+  supabase: SupabaseClient,
+  code: string,
+  roomId: string,
+  expirationType: "time_expired" | "usage_limit_reached" | "manually_invalidated",
+  metadata?: Record<string, unknown>
+): Promise<boolean> {
+  const { error } = await supabase
+    .rpc("log_invite_expiration", {
+      p_invite_code: code,
+      p_room_id: roomId,
+      p_expiration_type: expirationType,
+      p_metadata: metadata || {},
+    })
+
+  if (error) {
+    console.error("[invite] Failed to log invite expiration:", error)
+    return false
+  }
+
+  return true
 }
 
 /**

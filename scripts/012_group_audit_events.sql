@@ -5,7 +5,7 @@ create table if not exists public.group_audit_events (
   event_id uuid primary key default gen_random_uuid(),
   group_id text not null references public.rooms(id) on delete cascade,
   event_type text not null check (
-    event_type in ('group_created', 'member_joined', 'member_left', 'member_removed')
+    event_type in ('group_created', 'member_joined', 'member_left', 'member_removed', 'invite_expired', 'invite_limit_reached')
   ),
   actor_user_id uuid references auth.users(id) on delete set null,
   target_user_id uuid references auth.users(id) on delete set null,

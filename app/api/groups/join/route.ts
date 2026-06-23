@@ -3,6 +3,8 @@ import { type NextRequest, NextResponse } from "next/server";
 import {
   validateInviteCode,
   incrementInviteUseCount,
+  getInviteExpirationStatus,
+  logInviteExpiration,
 } from "@/lib/groups/invite";
 import { recordGroupAuditEvent } from "@/lib/blockchain/audit";
 
@@ -31,6 +33,48 @@ export async function POST(request: NextRequest) {
     const validation = await validateInviteCode(supabase, code ?? "");
 
     if (!validation.valid) {
+      // Log audit event for expired or invalid invites
+      const inviteStatus = await getInviteExpirationStatus(supabase, code ?? "");
+      if (inviteStatus?.isExpired) {
+        // Determine expiration type and log audit event
+        if (inviteStatus.isTimeExpired) {
+          await logInviteExpiration(supabase, code ?? "", "", "time_expired", {
+            time_remaining: inviteStatus.timeRemaining,
+            expires_at: inviteStatus.expiresAt,
+          });
+          await recordGroupAuditEvent({
+            supabase,
+            groupId: "", // Group ID not available for invalid invite
+            eventType: "invite_expired",
+            actorUserId: user.id,
+            metadata: {
+              invite_code: code,
+              reason: "time_expired",
+              user_attempted_join: user.id,
+            },
+          });
+        } else if (inviteStatus.isUsageExpired) {
+          await logInviteExpiration(supabase, code ?? "", "", "usage_limit_reached", {
+            uses_remaining: inviteStatus.usesRemaining,
+            max_uses: inviteStatus.maxUses,
+            use_count: inviteStatus.useCount,
+          });
+          await recordGroupAuditEvent({
+            supabase,
+            groupId: "",
+            eventType: "invite_limit_reached",
+            actorUserId: user.id,
+            metadata: {
+              invite_code: code,
+              reason: "usage_limit_reached",
+              max_uses: inviteStatus.maxUses,
+              use_count: inviteStatus.useCount,
+              user_attempted_join: user.id,
+            },
+          });
+        }
+      }
+
       console.warn(
         `[groups/join] Invalid invite attempt — user: ${user.id}, code: ${
           code ?? "(none)"

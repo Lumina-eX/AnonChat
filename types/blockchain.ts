@@ -25,7 +25,9 @@ export type AuditEventType =
   | "group_created"
   | "member_joined"
   | "member_left"
-  | "member_removed";
+  | "member_removed"
+  | "invite_expired"
+  | "invite_limit_reached";
 
 export interface StellarTransaction {
   hash: string;
