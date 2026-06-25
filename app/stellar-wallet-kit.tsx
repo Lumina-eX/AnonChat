@@ -9,27 +9,45 @@ import {
   LobstrModule,
   HanaModule,
 } from "@creit.tech/stellar-wallets-kit";
+import {
+  clearWalletSession,
+  getPersistedWalletId,
+  persistWalletSession,
+} from "@/lib/wallet-session-storage";
 
 export { FREIGHTER_ID, ALBEDO_ID };
 
 const SELECTED_WALLET_ID = "selectedWalletId";
-const WALLET_CONNECTED = "walletConnected";
 const disconnectListeners: Set<() => void> = new Set();
 
-function getSelectedWalletId() {
+function getSelectedWalletIdSync() {
   if (typeof window === "undefined") return null;
   return localStorage.getItem(SELECTED_WALLET_ID);
 }
 
-function isWalletConnected() {
-  if (typeof window === "undefined") return false;
-  return localStorage.getItem(WALLET_CONNECTED) === "true";
+async function hydrateSelectedWalletId(): Promise<string | null> {
+  if (typeof window === "undefined") return null;
+  const persistedId = await getPersistedWalletId();
+  if (!persistedId) return null;
+
+  const current = getSelectedWalletIdSync();
+  if (!current) {
+    localStorage.setItem(SELECTED_WALLET_ID, persistedId);
+  }
+
+  return persistedId;
 }
 
-function clearWalletStorage() {
+async function isWalletConnected() {
+  if (typeof window === "undefined") return false;
+  return (await getPersistedWalletId()) !== null;
+}
+
+async function clearWalletStorage() {
   if (typeof window === "undefined") return;
+
   localStorage.removeItem(SELECTED_WALLET_ID);
-  localStorage.removeItem(WALLET_CONNECTED);
+  await clearWalletSession();
 }
 
 let kit: StellarWalletsKit | null = null;
@@ -48,7 +66,7 @@ function getKit(): StellarWalletsKit | null {
         new HanaModule(),
       ],
       network: WalletNetwork.PUBLIC,
-      selectedWalletId: getSelectedWalletId() ?? FREIGHTER_ID,
+      selectedWalletId: getSelectedWalletIdSync() ?? FREIGHTER_ID,
     });
   } catch (e) {
     console.error("Failed to initialize StellarWalletsKit:", e);
@@ -58,7 +76,7 @@ function getKit(): StellarWalletsKit | null {
   return kit;
 }
 
-export async function signTransaction(...args: any[]) {
+export async function signTransaction(...args: unknown[]) {
   const kitInstance = getKit();
   if (!kitInstance) return null;
   // @ts-ignore
@@ -81,7 +99,9 @@ export async function signMessage(message: string): Promise<string> {
 
 export async function getPublicKey() {
   if (typeof window === "undefined") return null;
-  if (!getSelectedWalletId() || !isWalletConnected()) return null;
+
+  const selectedWalletId = await hydrateSelectedWalletId();
+  if (!selectedWalletId || !(await isWalletConnected())) return null;
 
   const kitInstance = getKit();
   if (!kitInstance) return null;
@@ -91,25 +111,30 @@ export async function getPublicKey() {
     return address;
   } catch (e) {
     console.error("Failed to get public key:", e);
+    await clearWalletStorage();
     return null;
   }
 }
 
 export async function autoReconnect() {
-  if (!isWalletConnected() || !getSelectedWalletId()) return null;
+  if (!(await isWalletConnected())) {
+    return null;
+  }
+
+  await hydrateSelectedWalletId();
 
   try {
     return await getPublicKey();
   } catch {
-    clearWalletStorage();
+    await clearWalletStorage();
     return null;
   }
 }
 
 export async function setWallet(walletId: string) {
   if (typeof window !== "undefined") {
+    await persistWalletSession(walletId);
     localStorage.setItem(SELECTED_WALLET_ID, walletId);
-    localStorage.setItem(WALLET_CONNECTED, "true");
 
     const kitInstance = getKit();
     if (!kitInstance) return;
@@ -147,7 +172,7 @@ export async function connect(callback?: () => Promise<void>) {
   if (!kitInstance) return;
 
   await kitInstance.openModal({
-    onWalletSelected: async (option: any) => {
+    onWalletSelected: async (option: { id: string }) => {
       try {
         await setWallet(option.id);
         if (callback) await callback();
@@ -181,7 +206,7 @@ export async function connectToWallet(walletId: string, callback?: () => Promise
 
     await setWallet(walletId);
     if (callback) await callback();
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error(`Failed to connect to wallet ${walletId}:`, e);
     throw e;
   }

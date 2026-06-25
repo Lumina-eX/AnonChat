@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X, Wallet, ShieldCheck, Zap, Download } from "lucide-react";
 import { 
@@ -58,14 +58,18 @@ export function WalletSelectionModal({ isOpen, onOpenChange, onConnectSuccess }:
         onConnectSuccess(""); 
         onOpenChange(false);
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Wallet connection error:", error);
-      if (error.message.includes("not installed")) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to connect wallet";
+      if (message.includes("not installed")) {
         toast.error(`${walletId === FREIGHTER_ID ? 'Freighter' : 'Wallet'} is not installed.`, {
           icon: <Download className="w-4 h-4" />,
         });
       } else {
-        toast.error(error.message || "Failed to connect wallet");
+        toast.error(message);
       }
     } finally {
       setIsConnecting(false);
