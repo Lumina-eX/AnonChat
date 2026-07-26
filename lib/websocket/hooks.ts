@@ -181,5 +181,10 @@ export function useWebSocketSend() {
     editMessage: useCallback((messageId: string, roomId: string, content: string) => {
       return client.current.editMessage(messageId, roomId, content);
     }, []),
+
+    deleteMessage: useCallback((messageId: string, roomId: string) => {
+      return client.current.deleteMessage(messageId, roomId);
+    }, []),
+    
   };
 }

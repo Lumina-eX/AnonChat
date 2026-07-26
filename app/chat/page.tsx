@@ -354,6 +354,26 @@ export default function ChatPage() {
     mobileSidebarOpen || activeMobileTab === "chats";
 
   const handleSendMessage = useCallback(async () => {
+    const handleDeleteMessage = useCallback(
+    async (messageId: string, roomId: string) => {
+      try {
+        const response = await fetch(`/api/messages?id=${encodeURIComponent(messageId)}`, {
+          method: "DELETE",
+        })
+        const data = await response.json()
+        if (!response.ok || data.error) {
+          throw new Error(data.error || "Failed to delete message")
+        }
+        setMessagesByChat((prev) => ({
+          ...prev,
+          [roomId]: (prev[roomId] || []).filter((m) => m.id !== messageId),
+        }))
+      } catch (error: any) {
+        handleAppError(error, "DELETE_MESSAGE")
+      }
+    },
+    [],
+  )
     const trimmedMessage = inputMessage.trim();
     if (!trimmedMessage || !selectedChatId) return;
 
@@ -437,6 +457,27 @@ export default function ChatPage() {
       setIsSending(false);
     }
   }, [inputMessage, selectedChatId, transformToChatMessage]);
+
+  const handleDeleteMessage = useCallback(
+    async (messageId: string, roomId: string) => {
+      try {
+        const response = await fetch(`/api/messages?id=${encodeURIComponent(messageId)}`, {
+          method: "DELETE",
+        })
+        const data = await response.json()
+        if (!response.ok || data.error) {
+          throw new Error(data.error || "Failed to delete message")
+        }
+        setMessagesByChat((prev) => ({
+          ...prev,
+          [roomId]: (prev[roomId] || []).filter((m) => m.id !== messageId),
+        }))
+      } catch (error: any) {
+        handleAppError(error, "DELETE_MESSAGE")
+      }
+    },
+    [],
+  )
 
   const handleComposerKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -745,13 +786,26 @@ export default function ChatPage() {
                          </div>
                        )}
 
-                     {!isLoadingMessagesByRoom[selectedChatId || ''] &&
+                   {!isLoadingMessagesByRoom[selectedChatId || ''] &&
                        filteredMessages.map((message) => (
-                         <ChatMessageBubble 
-                           key={message.id} 
-                           message={message} 
-                           searchQuery={messageSearchQuery} 
-                         />
+                         <div key={message.id} className="group relative">
+                           <ChatMessageBubble
+                             message={message}
+                             searchQuery={messageSearchQuery}
+                           />
+                           {message.author === "me" && (
+                             <button
+                               type="button"
+                               onClick={() =>
+                                 selectedChatId &&
+                                 handleDeleteMessage(message.id, selectedChatId)
+                               }
+                               className="absolute -top-2 right-0 text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
+                             >
+                               Delete
+                             </button>
+                           )}
+                         </div>
                        ))}
                    </div>
 

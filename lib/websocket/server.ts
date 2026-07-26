@@ -429,6 +429,35 @@ export function createWebSocketServer(port: number = 3001) {
               break
             }
 
+            case "delete_message": {
+            const deleteRoomId = message.payload.roomId
+            const deleteMessageId = message.payload.messageId
+            const deleteAuthorId = connection.userId
+
+            if (!deleteRoomId || !deleteMessageId || !deleteAuthorId) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: { message: "Invalid delete request" },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
+            broadcastToRoom(deleteRoomId, {
+              type: "message_deleted",
+              payload: {
+                messageId: deleteMessageId,
+                userId: deleteAuthorId,
+                roomId: deleteRoomId,
+                deletedAt: Date.now(),
+              },
+              timestamp: Date.now(),
+            })
+            break
+          }
+
             broadcastToRoom(editRoomId, {
               type: "message_edit",
               payload: {

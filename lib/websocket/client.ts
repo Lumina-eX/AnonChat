@@ -280,6 +280,18 @@ export class WebSocketClient {
   };
 }
 
+deleteMessage = (messageId: string, roomId: string) => {
+    if (!this.isConnected()) {
+      return { success: false, error: "OFFLINE" } as const;
+    }
+    this.send({
+      type: "delete_message",
+      payload: { messageId, roomId },
+      timestamp: Date.now(),
+    });
+    return { success: true } as const;
+  };
+
 let instance: WebSocketClient | null = null;
 export function getWebSocketClient(url?: string): WebSocketClient {
   if (!instance) {

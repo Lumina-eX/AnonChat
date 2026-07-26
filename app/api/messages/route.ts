@@ -52,6 +52,7 @@ export async function GET(request: NextRequest) {
       .from("messages")
       .select("*, profiles(display_name, avatar_url)")
       .eq("room_id", roomId)
+       .eq("deleted", false)
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1)
 
@@ -284,5 +285,60 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("[v0] POST /api/messages error:", error)
     return NextResponse.json({ error: "Failed to create message" }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const supabase = await createClient()
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get("id")
+
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 })
+    }
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from("messages")
+      .select("id, user_id, room_id, deleted")
+      .eq("id", id)
+      .maybeSingle()
+
+    if (fetchErr) throw fetchErr
+    if (!existing) {
+      return NextResponse.json({ error: "Message not found" }, { status: 404 })
+    }
+
+    if (existing.user_id !== user.id) {
+      return NextResponse.json({ error: "Forbidden. You can only delete your own messages." }, { status: 403 })
+    }
+
+    if (existing.deleted) {
+      return NextResponse.json({ error: "Message already deleted" }, { status: 409 })
+    }
+
+    const { data, error } = await supabase
+      .from("messages")
+      .update({ deleted: true, deleted_at: new Date().toISOString() })
+      .eq("id", id)
+      .select()
+
+    if (error) throw error
+    if (!data || data.length === 0) {
+      return NextResponse.json({ error: "Failed to delete message" }, { status: 500 })
+    }
+
+    return NextResponse.json({ message: data[0], success: true })
+  } catch (error) {
+    console.error("[v0] DELETE /api/messages error:", error)
+    return NextResponse.json({ error: "Failed to delete message" }, { status: 500 })
   }
 }
