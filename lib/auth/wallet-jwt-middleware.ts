@@ -4,6 +4,7 @@ import {
   WALLET_ACCESS_COOKIE,
   WALLET_ADDRESS_HEADER,
 } from "@/lib/auth/wallet-jwt";
+import { getActiveSessions } from "@/lib/auth/session-service";
 
 const PUBLIC_API_PREFIXES = [
   "/api/auth/nonce",
@@ -11,6 +12,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/auth/refresh",
   "/api/auth/logout",
   "/api/auth/sign-up",
+  "/api/auth/sessions",
   "/api/stellar/",
   "/api/rooms/seed-test",
 ];
@@ -48,9 +50,13 @@ type WalletApiAuthResult =
 /**
  * Validates wallet JWT on protected API routes and forwards the wallet address
  * via x-wallet-address. Returns a 401 response when validation fails.
+ *
+ * When validateSession is true, also checks that an active session record
+ * exists in the database for the wallet.
  */
 export async function enforceWalletApiAuth(
   request: NextRequest,
+  options?: { validateSession?: boolean },
 ): Promise<WalletApiAuthResult> {
   const { pathname } = request.nextUrl;
 
@@ -78,6 +84,19 @@ export async function enforceWalletApiAuth(
         { status: 401 },
       ),
     };
+  }
+
+  if (options?.validateSession) {
+    const activeSessions = await getActiveSessions(claims.walletAddress);
+    if (activeSessions.length === 0) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { error: "Unauthorized. No active session found. Please log in again." },
+          { status: 401 },
+        ),
+      };
+    }
   }
 
   const requestHeaders = new Headers(request.headers);

@@ -11,8 +11,6 @@ import { buildWalletAuthResponse } from "@/lib/auth/wallet-token-response";
  *
  * Authenticates a user by verifying their wallet signature.
  * The signature must be created by signing the nonce with the wallet's private key.
- * 
- * Requirements: 1.1-1.6, 2.4, 3.1-3.4, 4.1-4.6, 5.1-5.6, 6.1-6.6, 7.1-7.5
  */
 export async function POST(request: NextRequest) {
   try {
@@ -84,6 +82,10 @@ export async function POST(request: NextRequest) {
           isNewUser: false,
         },
         200,
+        {
+          userAgent: request.headers.get("user-agent") ?? undefined,
+          ipAddress: request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip") ?? undefined,
+        },
       );
     }
 
@@ -122,6 +124,10 @@ export async function POST(request: NextRequest) {
         isNewUser: true,
       },
       201,
+      {
+        userAgent: request.headers.get("user-agent") ?? undefined,
+        ipAddress: request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip") ?? undefined,
+      },
     );
   } catch (err: any) {
     console.error("[wallet-auth] /api/auth/wallet-login error:", err);
