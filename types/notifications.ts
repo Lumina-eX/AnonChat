@@ -1,4 +1,7 @@
-export type NotificationType = "group_added" | "ownership_transferred";
+export type NotificationType =
+  | "group_added"
+  | "ownership_transferred"
+  | "group_removed";
 
 export type NotificationDeliveryStatus = "pending" | "delivered" | "failed";
 

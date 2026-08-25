@@ -115,6 +115,22 @@ export async function notifyOwnershipTransferred(
   });
 }
 
+export async function notifyMemberRemoved(
+  supabase: SupabaseClient,
+  userId: string,
+  groupId: string,
+  groupName: string,
+): Promise<CreateNotificationResult> {
+  return createNotification(supabase, {
+    userId,
+    type: "group_removed",
+    title: "Removed from group",
+    body: `You were removed from "${groupName}".`,
+    groupId,
+    metadata: { groupName },
+  });
+}
+
 export function parsePagination(
   searchParams: URLSearchParams,
 ): { limit: number; offset: number; unreadOnly: boolean } {
