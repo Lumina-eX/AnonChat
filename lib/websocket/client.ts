@@ -11,6 +11,9 @@ const RECONNECT_ATTEMPTS = 5;
 const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30000;
 
+/** Maximum number of client-side sent message IDs to retain in memory. */
+const MAX_SENT_IDS = 500;
+
 export class WebSocketClient {
   private ws: WebSocket | null = null;
   private url: string;
@@ -29,6 +32,13 @@ export class WebSocketClient {
   private displayName: string | null = null;
   private avatarUrl: string | undefined = undefined;
   private joinedRooms: Set<string> = new Set();
+  /**
+   * Tracks client_message_ids that have already been dispatched so accidental
+   * double-sends from the same client instance are caught locally, before the
+   * message reaches the server.  Values are dispatch timestamps (ms).
+   * Evicted when the cache exceeds MAX_SENT_IDS.
+   */
+  private sentMessageIds: Map<string, number> = new Map();
 
   constructor(url: string) {
     this.url = url;
@@ -147,10 +157,28 @@ export class WebSocketClient {
 
   // --- Domain Methods ---
 
+  /**
+   * Register a client_message_id as sent, evicting the oldest entry when the
+   * cache is full to keep memory usage bounded.
+   */
+  private trackSentId(clientMessageId: string): void {
+    if (this.sentMessageIds.size >= MAX_SENT_IDS) {
+      // Evict the oldest entry (insertion-ordered Map)
+      const firstKey = this.sentMessageIds.keys().next().value;
+      if (firstKey !== undefined) this.sentMessageIds.delete(firstKey);
+    }
+    this.sentMessageIds.set(clientMessageId, Date.now());
+  }
+
   sendMessage(
     roomId: string,
     content: string,
-  ): { success: boolean; error?: string } {
+    /**
+     * Optional pre-generated client_message_id.  Pass the same value on
+     * retry; omit (or pass undefined) to auto-generate a fresh one.
+     */
+    clientMessageId?: string,
+  ): { success: boolean; error?: string; clientMessageId?: string } {
     if (!this.walletAddress) {
       handleAppError("Wallet not connected", "WALLET_CONNECT");
       return { success: false };
@@ -169,12 +197,27 @@ export class WebSocketClient {
       return { success: false };
     }
 
+    // Generate a fresh UUID if the caller did not supply one
+    const msgId = clientMessageId ?? crypto.randomUUID();
+
+    // Client-side duplicate guard: if this ID was already sent in this session,
+    // skip re-sending.  The server also deduplicates, but catching it here avoids
+    // a redundant round-trip.
+    if (this.sentMessageIds.has(msgId)) {
+      console.warn(
+        `[WebSocketClient] Duplicate send blocked client-side (clientMessageId=${msgId})`,
+      );
+      return { success: true, clientMessageId: msgId };
+    }
+
+    this.trackSentId(msgId);
+
     this.send({
       type: "send_message",
-      payload: { roomId, content },
+      payload: { roomId, content, clientMessageId: msgId },
       timestamp: Date.now(),
     });
-    return { success: true };
+    return { success: true, clientMessageId: msgId };
   }
 
   /**

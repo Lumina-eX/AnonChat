@@ -1,6 +1,7 @@
 // Server-to-client event types
 export type WebSocketServerEventType =
   | "message"
+  | "message_duplicate"
   | "message_status_update"
   | "message_edit"
   | "message_read_receipt"
@@ -55,6 +56,8 @@ export interface RoomPresence {
 
 export interface ChatMessage {
   id: string
+  /** Client-generated UUID for idempotent delivery. Same value must be sent on retry. */
+  clientMessageId?: string
   roomId: string
   userId: string
   displayName: string

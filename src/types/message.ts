@@ -6,4 +6,6 @@ export interface Message {
   isOwn: boolean;
   isEncrypted: boolean;
   editedAt?: Date;
+  /** Client-generated UUID used for idempotent message submission. */
+  clientMessageId?: string;
 }

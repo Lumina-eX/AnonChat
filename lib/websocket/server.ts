@@ -38,6 +38,22 @@ const userPresence = new Map<string, PresenceRecord>()
 const userConnections = new Map<string, Set<string>>()
 const presenceTimeouts = new Map<string, NodeJS.Timeout>()
 
+/**
+ * In-memory deduplication cache for WS send_message events.
+ * Maps client_message_id → server-assigned message ID (UUID).
+ * TTL-eviction runs every DEDUP_EVICTION_INTERVAL_MS.
+ */
+const dedupCache = new Map<string, { serverId: string; createdAt: number }>()
+const DEDUP_TTL_MS = 5 * 60 * 1000 // 5 minutes
+const DEDUP_EVICTION_INTERVAL_MS = 60 * 1000 // every 1 minute
+
+setInterval(() => {
+  const cutoff = Date.now() - DEDUP_TTL_MS
+  for (const [key, entry] of dedupCache) {
+    if (entry.createdAt < cutoff) dedupCache.delete(key)
+  }
+}, DEDUP_EVICTION_INTERVAL_MS).unref()
+
 const HEARTBEAT_INTERVAL = 30000 // 30 seconds
 const PRESENCE_GRACE_PERIOD = 5000 // 5 seconds
 
@@ -364,6 +380,7 @@ export function createWebSocketServer(port: number = 3001) {
           case "send_message": {
             const msgRoomId = message.payload.roomId
             const msgUserId = connection.userId
+            const clientMessageId: string | undefined = message.payload.clientMessageId
 
             if (!msgUserId) {
               ws.send(
@@ -376,10 +393,54 @@ export function createWebSocketServer(port: number = 3001) {
               break
             }
 
+            // --- Server-side idempotency check ---
+            if (clientMessageId) {
+              const cached = dedupCache.get(clientMessageId)
+              if (cached) {
+                // Duplicate detected: echo an acknowledgement with the original
+                // server ID so the client can reconcile its optimistic message.
+                console.warn(
+                  JSON.stringify({
+                    timestamp: new Date().toISOString(),
+                    level: "WARN",
+                    event: "message.duplicate_detected",
+                    context: {
+                      transport: "websocket",
+                      clientMessageId,
+                      existingServerId: cached.serverId,
+                      userId: msgUserId,
+                      roomId: msgRoomId,
+                    },
+                  }),
+                )
+                ws.send(
+                  JSON.stringify({
+                    type: "message_duplicate",
+                    payload: {
+                      clientMessageId,
+                      serverId: cached.serverId,
+                      roomId: msgRoomId,
+                    },
+                    timestamp: Date.now(),
+                  }),
+                )
+                break
+              }
+            }
+
+            const serverId = randomUUID()
+
+            // Register in dedup cache before broadcasting to avoid a race where
+            // the same client retries before we finish processing.
+            if (clientMessageId) {
+              dedupCache.set(clientMessageId, { serverId, createdAt: Date.now() })
+            }
+
             const broadcastMessage = {
               type: "message",
               payload: {
-                id: randomUUID(),
+                id: serverId,
+                clientMessageId: clientMessageId ?? null,
                 roomId: msgRoomId,
                 userId: msgUserId,
                 displayName: connection.user?.displayName,

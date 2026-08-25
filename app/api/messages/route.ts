@@ -194,10 +194,44 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { room_id, content, is_ephemeral = false } = body
+    const { room_id, content, is_ephemeral = false, client_message_id } = body
 
     if (!room_id || !content) {
       return NextResponse.json({ error: "room_id and content are required" }, { status: 400 })
+    }
+
+    // --- Idempotency check (via client_message_id) ---
+    if (client_message_id) {
+      const { data: existingMessage, error: lookupErr } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("client_message_id", client_message_id)
+        .maybeSingle()
+
+      if (lookupErr) throw lookupErr
+
+      if (existingMessage) {
+        // Duplicate request: log and return the existing message with 200 status
+        // (not 409, so retries get the same result without an error)
+        console.warn(
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            level: "WARN",
+            event: "message.duplicate_detected",
+            context: {
+              transport: "http",
+              clientMessageId: client_message_id,
+              existingMessageId: existingMessage.id,
+              userId: user.id,
+              roomId: room_id,
+            },
+          }),
+        )
+        return NextResponse.json(
+          { message: existingMessage, success: true, deduplicated: true },
+          { status: 200 },
+        )
+      }
     }
 
     const walletKey = getWalletRateLimitKey(user)
@@ -264,6 +298,11 @@ export async function POST(request: NextRequest) {
       content,
       is_encrypted: false,
       status: "sent",
+    }
+
+    // Attach client_message_id if provided
+    if (client_message_id) {
+      messageData.client_message_id = client_message_id
     }
 
     // Handle ephemeral messages
