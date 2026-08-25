@@ -96,4 +96,43 @@ describe("MessageItem", () => {
     );
     expect(screen.getByText("Original message was deleted")).toBeDefined();
   });
-});
+
+  it("shows sending indicator when status is sending", () => {
+    render(<MessageItem message={{ ...baseMessage, status: "sending" }} />);
+    expect(screen.getByText("Sending\u2026")).toBeDefined();
+    expect(screen.queryByText("Tap to retry")).toBeNull();
+  });
+
+  it("shows retry button when status is failed", () => {
+    const onRetry = vi.fn();
+    render(<MessageItem message={{ ...baseMessage, status: "failed" }} onRetry={onRetry} />);
+    expect(screen.getByText("Tap to retry")).toBeDefined();
+    expect(screen.queryByText("Sending\u2026")).toBeNull();
+  });
+
+  it("calls onRetry when retry button is clicked", () => {
+    const onRetry = vi.fn();
+    render(<MessageItem message={{ ...baseMessage, status: "failed" }} onRetry={onRetry} />);
+    fireEvent.click(screen.getByText("Tap to retry"));
+    expect(onRetry).toHaveBeenCalledWith("m1");
+  });
+
+  it("shows timestamp when status is sent", () => {
+    const { container } = render(<MessageItem message={{ ...baseMessage, status: "sent" }} />);
+    const timestamp = container.querySelector(".text-gray-500");
+    expect(timestamp).not.toBeNull();
+    expect(timestamp?.textContent).toBeTruthy();
+  });
+
+  it("applies reduced opacity when sending", () => {
+    const { container } = render(<MessageItem message={{ ...baseMessage, status: "sending" }} />);
+    const bubble = container.querySelector(".opacity-60");
+    expect(bubble).not.toBeNull();
+  });
+
+  it("applies red background when failed", () => {
+    const { container } = render(<MessageItem message={{ ...baseMessage, status: "failed" }} />);
+    const bubble = container.querySelector(".bg-red-600\\/80");
+    expect(bubble).not.toBeNull();
+  });
+});
