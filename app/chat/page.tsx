@@ -10,7 +10,6 @@ import React, {
 import { ChatWelcomeState } from "@/components/chat-welcome-state";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
-import { ChatEmptyState } from "@/components/chat-empty-state";
 import { GroupAuditDialog } from "@/components/group-audit-dialog";
 import {
   PresenceIndicator,
@@ -21,9 +20,12 @@ import ConnectWallet from "@/components/wallet-connector";
 import { RoomActivityPanel } from "@/components/room-activity-panel";
 import { MessageSearchBar } from "@/components/message-search-bar";
 import { GroupVerificationBadge } from "@/components/GroupVerificationBadge";
-import { ChatMessageBubble, type ChatMessage } from "@/components/chat-message-bubble";
+import {
+  ChatMessageBubble,
+  type ChatMessage,
+  type Reaction,
+} from "@/components/chat-message-bubble";
 import { cn } from "@/lib/utils";
-import { highlightText } from "@/lib/highlight-text";
 import { handleAppError } from "@/lib/error-handler"; // Integrated Error Handler
 import {
   ArrowLeft,
@@ -45,6 +47,7 @@ import {
 } from "lucide-react";
 import { StellarNetworkStatus } from "@/components/stellar-network-status";
 import { WalletNetworkWarning } from "@/components/wallet-network-warning";
+import toast from "react-hot-toast";
 
 type ChatPreview = {
   id: string;
@@ -72,12 +75,20 @@ interface DBMessage {
   user_id: string;
   content: string;
   created_at: string;
+  status?: ChatMessage["status"];
+  reactions?: Reaction[];
+  reply_to?: {
+    id: string;
+    content: string;
+    created_at: string;
+  } | null;
 }
 
 export default function ChatPage() {
   const [query, setQuery] = useState("");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState("");
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [roomMembersOpen, setRoomMembersOpen] = useState(false);
   const [auditTrailOpen, setAuditTrailOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -118,6 +129,7 @@ export default function ChatPage() {
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
 
   // Load pinned message IDs from localStorage per room
   useEffect(() => {
@@ -209,6 +221,7 @@ export default function ChatPage() {
   const transformToChatMessage = useCallback(
     (message: DBMessage): ChatMessage => ({
       id: message.id,
+      userId: message.user_id,
       author: message.user_id === currentUser?.id ? "me" : "them",
       text: message.content,
       time: new Date(message.created_at).toLocaleTimeString([], {
@@ -216,7 +229,19 @@ export default function ChatPage() {
         minute: "2-digit",
         hour12: false,
       }),
-      status: "read",
+      status: message.status || "read",
+      reactions: message.reactions,
+      replyTo: message.reply_to
+        ? {
+            id: message.reply_to.id,
+            text: message.reply_to.content,
+            time: new Date(message.reply_to.created_at).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            }),
+          }
+        : undefined,
     }),
     [currentUser?.id],
   );
@@ -455,6 +480,8 @@ export default function ChatPage() {
     const trimmedMessage = inputMessage.trim();
     if (!trimmedMessage || !selectedChatId) return;
 
+    const replyTarget = replyingTo;
+
     if (!window.navigator.onLine) {
       handleAppError(new Error("network"), "NETWORK");
       return;
@@ -463,6 +490,7 @@ export default function ChatPage() {
     const tempId = `temp_${Date.now()}`;
     const optimisticMessage: ChatMessage = {
       id: tempId,
+      userId: currentUser?.id,
       author: "me",
       text: trimmedMessage,
       time: new Date().toLocaleTimeString([], {
@@ -471,6 +499,13 @@ export default function ChatPage() {
         hour12: false,
       }),
       status: "sending",
+      replyTo: replyTarget
+        ? {
+            id: replyTarget.id,
+            text: replyTarget.text,
+            time: replyTarget.time,
+          }
+        : undefined,
     };
 
     setMessagesByChat((prev) => ({
@@ -478,6 +513,7 @@ export default function ChatPage() {
       [selectedChatId]: [...(prev[selectedChatId] || []), optimisticMessage],
     }));
     setInputMessage("");
+    setReplyingTo(null);
     setIsSending(true);
 
     try {
@@ -487,6 +523,7 @@ export default function ChatPage() {
         body: JSON.stringify({
           room_id: selectedChatId,
           content: trimmedMessage,
+          ...(replyTarget ? { reply_to_id: replyTarget.id } : {}),
         }),
       });
 
@@ -497,7 +534,10 @@ export default function ChatPage() {
       }
 
       const savedMessage: ChatMessage = data.message
-        ? transformToChatMessage(data.message)
+        ? {
+            ...transformToChatMessage(data.message),
+            replyTo: optimisticMessage.replyTo,
+          }
         : { ...optimisticMessage, status: "sent" };
 
       setMessagesByChat((prev) => ({
@@ -531,7 +571,122 @@ export default function ChatPage() {
     } finally {
       setIsSending(false);
     }
-  }, [inputMessage, selectedChatId, transformToChatMessage]);
+  }, [currentUser?.id, inputMessage, replyingTo, selectedChatId, transformToChatMessage]);
+
+  const handleReply = useCallback((message: ChatMessage) => {
+    setReplyingTo(message);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, []);
+
+  const handleCopy = useCallback(async (message: ChatMessage) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(message.text);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = message.text;
+        textArea.setAttribute("readonly", "");
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.select();
+        const copied = document.execCommand("copy");
+        document.body.removeChild(textArea);
+        if (!copied) throw new Error("Clipboard unavailable");
+      }
+      toast.success("Message copied");
+    } catch {
+      toast.error("Could not copy message");
+    }
+  }, []);
+
+  const handleDelete = useCallback(async (message: ChatMessage) => {
+    if (!selectedChatId || !message.userId) return;
+
+    try {
+      const response = await fetch("/api/messages", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: message.id }),
+      });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "Failed to delete message");
+
+      setMessagesByChat((prev) => ({
+        ...prev,
+        [selectedChatId]: (prev[selectedChatId] || []).filter((item) => item.id !== message.id),
+      }));
+      toast.success("Message deleted");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not delete message");
+    }
+  }, [selectedChatId]);
+
+  const handleReact = useCallback(async (messageId: string, emoji: string) => {
+    if (!selectedChatId || !currentUser?.id) {
+      toast.error("Sign in to react to messages");
+      return;
+    }
+
+    const message = (messagesByChat[selectedChatId] || []).find((item) => item.id === messageId);
+    const existingReaction = message?.reactions?.find(
+      (reaction) => reaction.emoji === emoji && reaction.userIds.includes(currentUser.id),
+    );
+    const method = existingReaction ? "DELETE" : "POST";
+
+    try {
+      const response = await fetch(`/api/messages/${encodeURIComponent(messageId)}/reactions`, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emoji }),
+      });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "Failed to update reaction");
+
+      setMessagesByChat((prev) => ({
+        ...prev,
+        [selectedChatId]: (prev[selectedChatId] || []).map((item) => {
+          if (item.id !== messageId) return item;
+          const reactions = [...(item.reactions || [])];
+          const reactionIndex = reactions.findIndex((reaction) => reaction.emoji === emoji);
+          if (method === "DELETE") {
+            if (reactionIndex >= 0) {
+              const userIds = reactions[reactionIndex].userIds.filter((id) => id !== currentUser.id);
+              if (userIds.length === 0) reactions.splice(reactionIndex, 1);
+              else reactions[reactionIndex] = { ...reactions[reactionIndex], userIds };
+            }
+          } else if (reactionIndex >= 0) {
+            reactions[reactionIndex] = {
+              ...reactions[reactionIndex],
+              userIds: reactions[reactionIndex].userIds.includes(currentUser.id)
+                ? reactions[reactionIndex].userIds
+                : [...reactions[reactionIndex].userIds, currentUser.id],
+            };
+          } else {
+            reactions.push({ emoji, userIds: [currentUser.id] });
+          }
+          return { ...item, reactions };
+        }),
+      }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update reaction");
+    }
+  }, [currentUser?.id, messagesByChat, selectedChatId]);
+
+  const handleReport = useCallback(async (message: ChatMessage) => {
+    try {
+      const response = await fetch(`/api/messages/${encodeURIComponent(message.id)}/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "Failed to report message");
+      toast.success("Message reported");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not report message");
+    }
+  }, []);
 
   const handleComposerKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -974,11 +1129,34 @@ export default function ChatPage() {
                            isAdmin={isAdmin}
                            onTogglePin={(msgId) => togglePinMessage(selectedChat.id, msgId)}
                            isHighlighted={highlightedMessageId === message.id}
+                           currentUserId={currentUser?.id || ""}
+                           onReply={handleReply}
+                           onCopy={handleCopy}
+                           onDelete={handleDelete}
+                           onReact={handleReact}
+                           onReport={handleReport}
                          />
                        ))}
                    </div>
 
                   <div className="p-3 sm:p-4 border-t border-border/70 bg-card/80 backdrop-blur-sm">
+                    {replyingTo && (
+                      <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-primary">Replying to message</p>
+                          <p className="truncate text-muted-foreground">{replyingTo.text}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setReplyingTo(null)}
+                          className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          aria-label="Cancel reply"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
+
                     <div className="flex items-end gap-2 sm:gap-3">
                       <button
                         type="button"
@@ -994,6 +1172,7 @@ export default function ChatPage() {
                       </button>
 
                       <textarea
+                        ref={composerRef}
                         value={inputMessage}
                         onChange={(event) =>
                           setInputMessage(event.target.value)

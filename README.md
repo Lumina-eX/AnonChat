@@ -174,6 +174,7 @@ cp .env.example .env.local
 # scripts/001_create_profiles.sql
 # scripts/002_create_profile_trigger.sql
 # scripts/003_room_members_and_removal_votes.sql  (for wallet-based removal voting)
+# scripts/020_message_context_menu.sql  (for message replies, reactions, and reports)
 
 # 4. Start dev server
 pnpm dev

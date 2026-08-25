@@ -1,7 +1,7 @@
-import React, { useState } from "react";
 import { cn } from "@/lib/utils";
 import { highlightText } from "@/lib/highlight-text";
 import { Pin } from "lucide-react";
+import { MessageContextMenu } from "@/components/message-context-menu";
 
 export type Reaction = {
   emoji: string;
@@ -10,12 +10,18 @@ export type Reaction = {
 
 export type ChatMessage = {
   id: string;
+  userId?: string;
   author: "me" | "them";
   text: string;
   time: string;
   status: "sending" | "sent" | "delivered" | "read";
   isPinned?: boolean;
   reactions?: Reaction[];
+  replyTo?: {
+    id: string;
+    text: string;
+    time: string;
+  };
 };
 
 interface ChatMessageBubbleProps {
@@ -27,6 +33,10 @@ interface ChatMessageBubbleProps {
   isHighlighted?: boolean;
   currentUserId?: string;
   onReact?: (messageId: string, emoji: string) => void;
+  onReply?: (message: ChatMessage) => void;
+  onCopy?: (message: ChatMessage) => void | Promise<void>;
+  onDelete?: (message: ChatMessage) => void | Promise<void>;
+  onReport?: (message: ChatMessage) => void | Promise<void>;
 }
 
 // A lightweight set of emojis for quick reactions
@@ -41,13 +51,16 @@ export function ChatMessageBubble({
   isHighlighted = false,
   currentUserId = "me",
   onReact,
+  onReply,
+  onCopy,
+  onDelete,
+  onReport,
 }: ChatMessageBubbleProps) {
-  const isMe = message.author === "me";
-  const [showPicker, setShowPicker] = useState(false);
-
+  const isMe = message.userId
+    ? message.userId === currentUserId
+    : message.author === "me";
   const handleEmojiClick = (emoji: string) => {
     onReact?.(message.id, emoji);
-    setShowPicker(false);
   };
 
   return (
@@ -79,8 +92,16 @@ export function ChatMessageBubble({
       </div>
 
       {/* Message Bubble */}
-      <div
-        className={cn(
+      <MessageContextMenu
+        canDelete={isMe}
+        onReply={onReply ? () => onReply(message) : undefined}
+        onCopy={onCopy ? () => onCopy(message) : undefined}
+        onDelete={onDelete ? () => onDelete(message) : undefined}
+        onReact={onReact ? (emoji) => onReact(message.id, emoji) : undefined}
+        onReport={onReport ? () => onReport(message) : undefined}
+      >
+        <div
+          className={cn(
           "rounded-2xl px-4 py-2.5 shadow-sm text-sm relative transition-all duration-300",
           isMe
             ? "bg-primary text-primary-foreground rounded-br-sm"
@@ -93,6 +114,13 @@ export function ChatMessageBubble({
           <div className="flex items-center gap-1 text-[10px] font-semibold mb-1 opacity-90 text-primary">
             <Pin className="h-3 w-3 rotate-45" />
             <span>Pinned</span>
+          </div>
+        )}
+
+        {message.replyTo && (
+          <div className="mb-2 border-l-2 border-current/40 pl-2 text-xs opacity-80">
+            <p className="font-medium">Replying to a message</p>
+            <p className="truncate">{message.replyTo.text}</p>
           </div>
         )}
 
@@ -114,7 +142,8 @@ export function ChatMessageBubble({
             <Pin className="h-3 w-3 rotate-45" />
           </button>
         )}
-      </div>
+        </div>
+      </MessageContextMenu>
 
       {/* Reactions Display */}
       {message.reactions && message.reactions.length > 0 && (
