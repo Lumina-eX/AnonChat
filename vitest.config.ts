@@ -10,6 +10,7 @@ export default defineConfig({
       "lib/utils/stellar-address.test.ts",
       "components/GroupVerificationBadge.test.tsx",
       "tests/group-roles.test.ts",
+      "lib/auth/session-store.test.ts",
     ],
     globals: false,
   },
