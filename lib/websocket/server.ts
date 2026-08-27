@@ -78,6 +78,17 @@ export function createWebSocketServer(port: number = 3001) {
     })
   }
 
+  function removeUserFromRoom(userId: string, roomId: string) {
+    const room = rooms.get(roomId)
+    if (!room) return
+
+    room.users.forEach((clientId) => {
+      if (clients.get(clientId)?.userId === userId) {
+        room.users.delete(clientId)
+      }
+    })
+  }
+
   function setupNotificationBridge(httpServer: http.Server) {
     httpServer.on("request", (req: http.IncomingMessage, res: http.ServerResponse) => {
       if (req.method !== "POST" || req.url !== "/notify") {
@@ -103,18 +114,30 @@ export function createWebSocketServer(port: number = 3001) {
         try {
           const parsed = JSON.parse(body) as {
             userId?: string
+            event?: {
+              type?: string
+              payload?: Record<string, unknown>
+            }
             notification?: Record<string, unknown>
           }
+          const event = parsed.event ?? (parsed.notification
+            ? { type: "notification", payload: parsed.notification }
+            : null)
 
-          if (!parsed.userId || !parsed.notification) {
+          if (!parsed.userId || !event?.type || !event.payload) {
             res.writeHead(400, { "Content-Type": "application/json" })
-            res.end(JSON.stringify({ error: "userId and notification are required" }))
+            res.end(JSON.stringify({ error: "userId and event are required" }))
             return
           }
 
+          const eventGroupId = event.payload.groupId
+          if (event.type === "member_removed" && typeof eventGroupId === "string") {
+            removeUserFromRoom(parsed.userId, eventGroupId)
+          }
+
           sendToUser(parsed.userId, {
-            type: "notification",
-            payload: parsed.notification,
+            type: event.type,
+            payload: event.payload,
             timestamp: Date.now(),
           })
 
