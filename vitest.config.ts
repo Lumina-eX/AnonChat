@@ -14,6 +14,8 @@ export default defineConfig({
       "src/components/MessageInput.test.tsx",
       "tests/group-roles.test.ts",
       "tests/wallet-ownership-proof.test.ts",
+      "tests/group-members-pagination.test.ts",
+      "tests/stellar-transaction-history.test.ts",
     ],
     globals: false,
   },

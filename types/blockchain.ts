@@ -226,3 +226,56 @@ export interface GroupCreationResponse {
     memoGroupId?: string;
   };
 }
+
+// ── Transaction history types ───────────────────────────────────────────────
+
+export type WalletTransactionStatus = "successful" | "failed" | "pending";
+
+export type AnonChatActionType =
+  | "group_creation"
+  | "audit_log"
+  | "metadata_anchor"
+  | "payment"
+  | "contract_call"
+  | "general";
+
+export interface StellarWalletTransaction {
+  id: string;
+  hash: string;
+  ledger: number;
+  createdAt: string;
+  status: WalletTransactionStatus;
+  successful: boolean;
+  memo: string | null;
+  memoType: string | null;
+  isAnonChat: boolean;
+  actionType: AnonChatActionType;
+  actionLabel: string;
+  feeChargedXlm: string;
+  feeChargedStroops: string;
+  sourceAccount: string;
+  operationCount: number;
+  explorerUrl: string;
+  errorMessage?: string | null;
+  pagingToken: string;
+}
+
+export interface StellarTransactionHistoryResponse {
+  walletAddress: string;
+  transactions: StellarWalletTransaction[];
+  cursor: {
+    next: string | null;
+    prev: string | null;
+  };
+  network: "testnet" | "mainnet";
+  totalReturned: number;
+  isInactiveAccount?: boolean;
+}
+
+export interface TransactionHistoryOptions {
+  cursor?: string;
+  limit?: number;
+  order?: "asc" | "desc";
+  filter?: "anonchat" | "all";
+}
+
