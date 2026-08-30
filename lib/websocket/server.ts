@@ -1,6 +1,7 @@
 import WebSocket, { WebSocketServer } from "ws"
 import http from "http"
 import { randomUUID } from "crypto"
+import { validateMessage, ValidationErrorType } from "../middleware/message-validation"
 
 // Type definitions
 interface User {
@@ -93,6 +94,17 @@ export function createWebSocketServer(port: number = 3001) {
     })
   }
 
+  function removeUserFromRoom(userId: string, roomId: string) {
+    const room = rooms.get(roomId)
+    if (!room) return
+
+    room.users.forEach((clientId) => {
+      if (clients.get(clientId)?.userId === userId) {
+        room.users.delete(clientId)
+      }
+    })
+  }
+
   function setupNotificationBridge(httpServer: http.Server) {
     httpServer.on("request", (req: http.IncomingMessage, res: http.ServerResponse) => {
       if (req.method !== "POST" || req.url !== "/notify") {
@@ -118,18 +130,30 @@ export function createWebSocketServer(port: number = 3001) {
         try {
           const parsed = JSON.parse(body) as {
             userId?: string
+            event?: {
+              type?: string
+              payload?: Record<string, unknown>
+            }
             notification?: Record<string, unknown>
           }
+          const event = parsed.event ?? (parsed.notification
+            ? { type: "notification", payload: parsed.notification }
+            : null)
 
-          if (!parsed.userId || !parsed.notification) {
+          if (!parsed.userId || !event?.type || !event.payload) {
             res.writeHead(400, { "Content-Type": "application/json" })
-            res.end(JSON.stringify({ error: "userId and notification are required" }))
+            res.end(JSON.stringify({ error: "userId and event are required" }))
             return
           }
 
+          const eventGroupId = event.payload.groupId
+          if (event.type === "member_removed" && typeof eventGroupId === "string") {
+            removeUserFromRoom(parsed.userId, eventGroupId)
+          }
+
           sendToUser(parsed.userId, {
-            type: "notification",
-            payload: parsed.notification,
+            type: event.type,
+            payload: event.payload,
             timestamp: Date.now(),
           })
 
@@ -393,47 +417,25 @@ export function createWebSocketServer(port: number = 3001) {
               break
             }
 
-            // --- Server-side idempotency check ---
-            if (clientMessageId) {
-              const cached = dedupCache.get(clientMessageId)
-              if (cached) {
-                // Duplicate detected: echo an acknowledgement with the original
-                // server ID so the client can reconcile its optimistic message.
-                console.warn(
-                  JSON.stringify({
-                    timestamp: new Date().toISOString(),
-                    level: "WARN",
-                    event: "message.duplicate_detected",
-                    context: {
-                      transport: "websocket",
-                      clientMessageId,
-                      existingServerId: cached.serverId,
-                      userId: msgUserId,
-                      roomId: msgRoomId,
-                    },
-                  }),
-                )
-                ws.send(
-                  JSON.stringify({
-                    type: "message_duplicate",
-                    payload: {
-                      clientMessageId,
-                      serverId: cached.serverId,
-                      roomId: msgRoomId,
-                    },
-                    timestamp: Date.now(),
-                  }),
-                )
-                break
-              }
-            }
+            // Validate message content
+            const validation = validateMessage(
+              { content: message.payload.content, roomId: msgRoomId },
+              'websocket'
+            )
 
-            const serverId = randomUUID()
-
-            // Register in dedup cache before broadcasting to avoid a race where
-            // the same client retries before we finish processing.
-            if (clientMessageId) {
-              dedupCache.set(clientMessageId, { serverId, createdAt: Date.now() })
+            if (!validation.isValid) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: {
+                    message: validation.error?.message,
+                    type: validation.error?.type,
+                    details: validation.error?.details,
+                  },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
             }
 
             const broadcastMessage = {
@@ -445,7 +447,7 @@ export function createWebSocketServer(port: number = 3001) {
                 userId: msgUserId,
                 displayName: connection.user?.displayName,
                 avatarUrl: connection.user?.avatarUrl,
-                content: message.payload.content,
+                content: validation.sanitized?.content || message.payload.content,
                 createdAt: Date.now(),
               },
               timestamp: Date.now(),
@@ -490,13 +492,34 @@ export function createWebSocketServer(port: number = 3001) {
               break
             }
 
+            // Validate message content for edits
+            const validation = validateMessage(
+              { content: editContent, id: editMessageId, roomId: editRoomId },
+              'websocket'
+            )
+
+            if (!validation.isValid) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: {
+                    message: validation.error?.message,
+                    type: validation.error?.type,
+                    details: validation.error?.details,
+                  },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
             broadcastToRoom(editRoomId, {
               type: "message_edit",
               payload: {
                 messageId: editMessageId,
                 userId: editAuthorId,
                 roomId: editRoomId,
-                content: editContent,
+                content: validation.sanitized?.content || editContent,
                 editedAt: Date.now(),
               },
               timestamp: Date.now(),

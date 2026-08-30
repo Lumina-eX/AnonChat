@@ -9,9 +9,9 @@ export interface RealtimeDispatchResult {
  * Pushes a notification to a connected user via the WebSocket server's HTTP bridge.
  * Fails gracefully when the WS server is unavailable (notification remains in DB).
  */
-export async function pushNotificationRealtime(
+async function postRealtimeEvent(
   userId: string,
-  notification: NotificationRecord,
+  event: Record<string, unknown>,
 ): Promise<RealtimeDispatchResult> {
   const notifyUrl =
     process.env.WS_NOTIFY_URL ||
@@ -25,7 +25,7 @@ export async function pushNotificationRealtime(
         "Content-Type": "application/json",
         Authorization: `Bearer ${secret}`,
       },
-      body: JSON.stringify({ userId, notification }),
+      body: JSON.stringify({ userId, event }),
       signal: AbortSignal.timeout(5000),
     });
 
@@ -45,4 +45,25 @@ export async function pushNotificationRealtime(
         : "Failed to reach WebSocket notification bridge";
     return { delivered: false, error: message };
   }
+}
+
+export function pushNotificationRealtime(
+  userId: string,
+  notification: NotificationRecord,
+): Promise<RealtimeDispatchResult> {
+  return postRealtimeEvent(userId, { type: "notification", payload: notification });
+}
+
+export function pushMemberRemovalRealtime(
+  userId: string,
+  groupId: string,
+  payload: { targetWallet: string; removedBy: string },
+): Promise<RealtimeDispatchResult> {
+  return postRealtimeEvent(userId, {
+    type: "member_removed",
+    payload: {
+      groupId,
+      ...payload,
+    },
+  });
 }

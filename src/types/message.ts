@@ -1,3 +1,10 @@
+export interface ReplyToInfo {
+  id: string;
+  text: string;
+  sender?: string;
+  isDeleted?: boolean;
+}
+
 export interface Message {
   id: string;
   text: string;
@@ -6,6 +13,6 @@ export interface Message {
   isOwn: boolean;
   isEncrypted: boolean;
   editedAt?: Date;
-  /** Client-generated UUID used for idempotent message submission. */
-  clientMessageId?: string;
+  replyTo?: ReplyToInfo | null;
 }
+
