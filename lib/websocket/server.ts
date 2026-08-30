@@ -1,6 +1,7 @@
 import WebSocket, { WebSocketServer } from "ws"
 import http from "http"
 import { randomUUID } from "crypto"
+import { validateMessage, ValidationErrorType } from "../middleware/message-validation"
 
 // Type definitions
 interface User {
@@ -77,6 +78,17 @@ export function createWebSocketServer(port: number = 3001) {
     })
   }
 
+  function removeUserFromRoom(userId: string, roomId: string) {
+    const room = rooms.get(roomId)
+    if (!room) return
+
+    room.users.forEach((clientId) => {
+      if (clients.get(clientId)?.userId === userId) {
+        room.users.delete(clientId)
+      }
+    })
+  }
+
   function setupNotificationBridge(httpServer: http.Server) {
     httpServer.on("request", (req: http.IncomingMessage, res: http.ServerResponse) => {
       if (req.method !== "POST" || req.url !== "/notify") {
@@ -102,18 +114,30 @@ export function createWebSocketServer(port: number = 3001) {
         try {
           const parsed = JSON.parse(body) as {
             userId?: string
+            event?: {
+              type?: string
+              payload?: Record<string, unknown>
+            }
             notification?: Record<string, unknown>
           }
+          const event = parsed.event ?? (parsed.notification
+            ? { type: "notification", payload: parsed.notification }
+            : null)
 
-          if (!parsed.userId || !parsed.notification) {
+          if (!parsed.userId || !event?.type || !event.payload) {
             res.writeHead(400, { "Content-Type": "application/json" })
-            res.end(JSON.stringify({ error: "userId and notification are required" }))
+            res.end(JSON.stringify({ error: "userId and event are required" }))
             return
           }
 
+          const eventGroupId = event.payload.groupId
+          if (event.type === "member_removed" && typeof eventGroupId === "string") {
+            removeUserFromRoom(parsed.userId, eventGroupId)
+          }
+
           sendToUser(parsed.userId, {
-            type: "notification",
-            payload: parsed.notification,
+            type: event.type,
+            payload: event.payload,
             timestamp: Date.now(),
           })
 
@@ -376,6 +400,27 @@ export function createWebSocketServer(port: number = 3001) {
               break
             }
 
+            // Validate message content
+            const validation = validateMessage(
+              { content: message.payload.content, roomId: msgRoomId },
+              'websocket'
+            )
+
+            if (!validation.isValid) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: {
+                    message: validation.error?.message,
+                    type: validation.error?.type,
+                    details: validation.error?.details,
+                  },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
             const broadcastMessage = {
               type: "message",
               payload: {
@@ -384,7 +429,7 @@ export function createWebSocketServer(port: number = 3001) {
                 userId: msgUserId,
                 displayName: connection.user?.displayName,
                 avatarUrl: connection.user?.avatarUrl,
-                content: message.payload.content,
+                content: validation.sanitized?.content || message.payload.content,
                 createdAt: Date.now(),
               },
               timestamp: Date.now(),
@@ -429,13 +474,34 @@ export function createWebSocketServer(port: number = 3001) {
               break
             }
 
+            // Validate message content for edits
+            const validation = validateMessage(
+              { content: editContent, id: editMessageId, roomId: editRoomId },
+              'websocket'
+            )
+
+            if (!validation.isValid) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: {
+                    message: validation.error?.message,
+                    type: validation.error?.type,
+                    details: validation.error?.details,
+                  },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
             broadcastToRoom(editRoomId, {
               type: "message_edit",
               payload: {
                 messageId: editMessageId,
                 userId: editAuthorId,
                 roomId: editRoomId,
-                content: editContent,
+                content: validation.sanitized?.content || editContent,
                 editedAt: Date.now(),
               },
               timestamp: Date.now(),

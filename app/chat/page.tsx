@@ -45,6 +45,7 @@ import {
   ChevronRight,
   X,
   ShieldCheck,
+  Reply,
 } from "lucide-react";
 import { StellarNetworkStatus } from "@/components/stellar-network-status";
 import { WalletNetworkWarning } from "@/components/wallet-network-warning";
@@ -78,6 +79,16 @@ interface DBMessage {
   user_id: string;
   content: string;
   created_at: string;
+  reply_to_id?: string | null;
+  reply_to?: {
+    id: string;
+    content: string;
+    user_id?: string;
+  } | null;
+  profiles?: {
+    display_name?: string;
+    avatar_url?: string;
+  };
 }
 
 /**
@@ -96,6 +107,8 @@ function ChatPageInner() {
   const [query, setQuery] = useState("");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState("");
+  const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const [roomMembersOpen, setRoomMembersOpen] = useState(false);
   const [auditTrailOpen, setAuditTrailOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -225,17 +238,35 @@ function ChatPageInner() {
   }, []);
 
   const transformToChatMessage = useCallback(
-    (message: DBMessage): ChatMessage => ({
-      id: message.id,
-      author: message.user_id === currentUser?.id ? "me" : "them",
-      text: message.content,
-      time: new Date(message.created_at).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }),
-      status: "read",
-    }),
+    (message: DBMessage): ChatMessage => {
+      let replyTo: ChatMessage["replyTo"] = null;
+      if (message.reply_to) {
+        replyTo = {
+          id: message.reply_to.id,
+          text: message.reply_to.content,
+          sender: message.reply_to.user_id === currentUser?.id ? "You" : "Them",
+        };
+      } else if (message.reply_to_id) {
+        replyTo = {
+          id: message.reply_to_id,
+          text: "Original message",
+        };
+      }
+
+      return {
+        id: message.id,
+        author: message.user_id === currentUser?.id ? "me" : "them",
+        text: message.content,
+        time: new Date(message.created_at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }),
+        status: "read",
+        replyTo,
+        senderName: message.profiles?.display_name,
+      };
+    },
     [currentUser?.id],
   );
 
@@ -408,7 +439,25 @@ function ChatPageInner() {
         }
 
         const fetchedMessages = data.messages || [];
-        const parsed = fetchedMessages.map(transformToChatMessage).reverse();
+        const messageMap = new Map<string, DBMessage>();
+        fetchedMessages.forEach((m: DBMessage) => messageMap.set(m.id, m));
+
+        const parsed = fetchedMessages
+          .map((m: DBMessage) => {
+            const chatMsg = transformToChatMessage(m);
+            if (m.reply_to_id && (!chatMsg.replyTo || chatMsg.replyTo.text === "Original message")) {
+              const parent = messageMap.get(m.reply_to_id);
+              if (parent) {
+                chatMsg.replyTo = {
+                  id: parent.id,
+                  text: parent.content,
+                  sender: parent.user_id === currentUser?.id ? "You" : (parent.profiles?.display_name || "Them"),
+                };
+              }
+            }
+            return chatMsg;
+          })
+          .reverse();
 
         setMessagesByChat((prev) => ({
           ...prev,
@@ -541,6 +590,7 @@ function ChatPageInner() {
   const handleSelectChat = useCallback((chatId: string) => {
     setSelectedChatId(chatId);
     setDeepLinkError(null);
+    setReplyingToMessage(null);
     setMobileSidebarOpen(false);
     setActiveMobileTab("conversation");
 
@@ -550,6 +600,15 @@ function ChatPageInner() {
     params.set("group", chatId);
     router.push(`/chat?${params.toString()}`, { scroll: false });
   }, [router, searchParams]);
+
+  const handleReplyToMessage = useCallback((message: ChatMessage) => {
+    setReplyingToMessage(message);
+    composerInputRef.current?.focus();
+  }, []);
+
+  const handleCancelReply = useCallback(() => {
+    setReplyingToMessage(null);
+  }, []);
 
   const isMobileSidebarVisible =
     mobileSidebarOpen || activeMobileTab === "chats";
@@ -563,6 +622,8 @@ function ChatPageInner() {
       return;
     }
 
+    const currentReply = replyingToMessage;
+    const currentChat = chats.find((chat) => chat.id === selectedChatId);
     const tempId = `temp_${Date.now()}`;
     const optimisticMessage: ChatMessage = {
       id: tempId,
@@ -574,6 +635,13 @@ function ChatPageInner() {
         hour12: false,
       }),
       status: "sending",
+      replyTo: currentReply
+        ? {
+            id: currentReply.id,
+            text: currentReply.text,
+            sender: currentReply.author === "me" ? "You" : (currentReply.senderName || currentChat?.name || "them"),
+          }
+        : null,
     };
 
     setMessagesByChat((prev) => ({
@@ -581,6 +649,7 @@ function ChatPageInner() {
       [selectedChatId]: [...(prev[selectedChatId] || []), optimisticMessage],
     }));
     setInputMessage("");
+    setReplyingToMessage(null);
     setIsSending(true);
 
     try {
@@ -590,6 +659,7 @@ function ChatPageInner() {
         body: JSON.stringify({
           room_id: selectedChatId,
           content: trimmedMessage,
+          reply_to_id: currentReply?.id || null,
         }),
       });
 
@@ -600,7 +670,10 @@ function ChatPageInner() {
       }
 
       const savedMessage: ChatMessage = data.message
-        ? transformToChatMessage(data.message)
+        ? {
+            ...transformToChatMessage(data.message),
+            replyTo: optimisticMessage.replyTo,
+          }
         : { ...optimisticMessage, status: "sent" };
 
       setMessagesByChat((prev) => ({
@@ -634,10 +707,15 @@ function ChatPageInner() {
     } finally {
       setIsSending(false);
     }
-  }, [inputMessage, selectedChatId, transformToChatMessage]);
+  }, [inputMessage, selectedChatId, replyingToMessage, transformToChatMessage, chats]);
 
   const handleComposerKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key === "Escape" && replyingToMessage) {
+        event.preventDefault();
+        setReplyingToMessage(null);
+        return;
+      }
       if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
         void handleSendMessage();
@@ -648,7 +726,7 @@ function ChatPageInner() {
         void handleSendMessage();
       }
     },
-    [handleSendMessage],
+    [handleSendMessage, replyingToMessage],
   );
 
   // Global Keyboard Shortcut Listener
@@ -661,9 +739,11 @@ function ChatPageInner() {
         return;
       }
 
-      // Esc -> Close active modals, dropdowns, or sidebars
+      // Esc -> Close active modals, dropdowns, reply mode, or sidebars
       if (event.key === "Escape") {
-        if (roomMembersOpen) {
+        if (replyingToMessage) {
+          setReplyingToMessage(null);
+        } else if (roomMembersOpen) {
           setRoomMembersOpen(false);
         } else if (mobileSidebarOpen) {
           setMobileSidebarOpen(false);
@@ -673,7 +753,7 @@ function ChatPageInner() {
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [roomMembersOpen, mobileSidebarOpen]);
+  }, [roomMembersOpen, mobileSidebarOpen, replyingToMessage]);
 
   const filteredChats = useMemo(() => {
     if (!query.trim()) return chats;
@@ -1100,21 +1180,52 @@ function ChatPageInner() {
                        )}
 
                      {!isLoadingMessagesByRoom[selectedChatId || ''] &&
-                       filteredMessages.map((message) => (
-                         <ChatMessageBubble 
-                           key={message.id} 
-                           message={message} 
-                           searchQuery={messageSearchQuery}
-                           isPinned={pinnedIds.includes(message.id)}
-                           isAdmin={isAdmin}
-                           onTogglePin={(msgId) => togglePinMessage(selectedChat.id, msgId)}
-                           isHighlighted={highlightedMessageId === message.id}
-                         />
-                       ))}
+                        filteredMessages.map((message) => (
+                          <ChatMessageBubble 
+                            key={message.id} 
+                            message={message} 
+                            searchQuery={messageSearchQuery}
+                            isPinned={pinnedIds.includes(message.id)}
+                            isAdmin={isAdmin}
+                            onTogglePin={(msgId) => togglePinMessage(selectedChat.id, msgId)}
+                            isHighlighted={highlightedMessageId === message.id}
+                            onReply={handleReplyToMessage}
+                            onJumpToMessage={handleScrollToMessage}
+                          />
+                        ))}
                    </div>
 
-                  <div className="p-3 sm:p-4 border-t border-border/70 bg-card/80 backdrop-blur-sm">
-                    <div className="flex items-end gap-2 sm:gap-3">
+                  <div className="border-t border-border/70 bg-card/80 backdrop-blur-sm">
+                    {replyingToMessage && (
+                      <div className="px-4 py-2 bg-muted/60 border-b border-border/60 flex items-center justify-between gap-3 text-xs animate-in fade-in slide-in-from-bottom-2 duration-200">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div className="p-1 rounded-md bg-primary/10 text-primary shrink-0">
+                            <Reply className="h-3.5 w-3.5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-primary text-[11px]">
+                                Replying to {replyingToMessage.author === "me" ? "yourself" : (replyingToMessage.senderName || selectedChat.name || "message")}
+                              </span>
+                            </div>
+                            <p className="text-muted-foreground truncate text-xs mt-0.5">
+                              {replyingToMessage.text}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleCancelReply}
+                          className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition"
+                          title="Cancel reply (Esc)"
+                          aria-label="Cancel reply"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="p-3 sm:p-4 flex items-end gap-2 sm:gap-3">
                       <button
                         type="button"
                         className="h-10 w-10 shrink-0 rounded-full border border-border/80 flex items-center justify-center text-muted-foreground hover:bg-muted/40"
@@ -1129,6 +1240,7 @@ function ChatPageInner() {
                       </button>
 
                       <textarea
+                        ref={composerInputRef}
                         value={inputMessage}
                         onChange={(event) =>
                           setInputMessage(event.target.value)

@@ -2,12 +2,23 @@
 
 import { useEffect, useMemo, useState } from "react"
 import * as Dialog from "@radix-ui/react-dialog"
-import { Users, UserMinus, Loader2 } from "lucide-react"
+import {
+  Users,
+  UserMinus,
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
+  Shield,
+  Crown,
+  ArrowUpDown,
+} from "lucide-react"
 import toast from "react-hot-toast"
 import { cn } from "@/lib/utils"
 import { PresenceIndicator } from "@/components/presence-indicator"
 import { WalletAddress } from "@/components/wallet-address"
 import { useWebSocket, useWebSocketMessage, useWebSocketSend } from "@/lib/websocket/hooks"
+
+type MemberRole = "owner" | "moderator" | "member"
 
 type Member = {
   user_id: string
@@ -16,6 +27,7 @@ type Member = {
   display_name: string | null
   wallet_address: string | null
   avatar_url: string | null
+  role?: MemberRole
 }
 
 type VotesByTarget = Record<
@@ -55,21 +67,43 @@ export function RoomMembersDialog({
   const [loading, setLoading] = useState(false)
   const [votingId, setVotingId] = useState<string | null>(null)
   const [presenceByUserId, setPresenceByUserId] = useState<Record<string, MemberPresence>>({})
+  
+  // Pagination & Sorting state
+  const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [sortBy, setSortBy] = useState<"joinDate" | "role" | "username">("joinDate")
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc")
+
   const { connectionState } = useWebSocket({ autoConnect: false })
   const { requestPresenceSnapshot } = useWebSocketSend()
 
-  const fetchData = async () => {
+  const fetchData = async (targetPage = page, sort = sortBy, order = sortOrder) => {
     if (!roomId) return
     setLoading(true)
     try {
+      const queryParams = new URLSearchParams({
+        page: targetPage.toString(),
+        limit: "15",
+        sortBy: sort,
+        sortOrder: order,
+      })
+
       const [membersRes, votesRes] = await Promise.all([
-        fetch(`/api/rooms/${encodeURIComponent(roomId)}/members`),
+        fetch(`/api/rooms/${encodeURIComponent(roomId)}/members?${queryParams.toString()}`),
         fetch(`/api/rooms/${encodeURIComponent(roomId)}/vote-remove`),
       ])
+
       if (membersRes.ok) {
         const data = await membersRes.json()
         const nextMembers: Member[] = data.members ?? []
         setMembers(nextMembers)
+        setTotalCount(data.totalCount ?? nextMembers.length)
+        setTotalPages(data.totalPages ?? 1)
+        setPage(data.page ?? targetPage)
+        setHasMore(Boolean(data.hasMore))
+
         setPresenceByUserId((prev) => {
           const next: Record<string, MemberPresence> = {}
           for (const member of nextMembers) {
@@ -118,8 +152,33 @@ export function RoomMembersDialog({
   }, [members, presenceByUserId])
 
   useEffect(() => {
-    if (open && roomId) fetchData()
+    if (open && roomId) {
+      setPage(1)
+      void fetchData(1, sortBy, sortOrder)
+    }
   }, [open, roomId])
+
+  const handleSortChange = (newSort: "joinDate" | "role" | "username") => {
+    const newOrder = sortBy === newSort && sortOrder === "asc" ? "desc" : "asc"
+    setSortBy(newSort)
+    setSortOrder(newOrder)
+    setPage(1)
+    void fetchData(1, newSort, newOrder)
+  }
+
+  const handlePrevPage = () => {
+    if (page <= 1) return
+    const prev = page - 1
+    setPage(prev)
+    void fetchData(prev, sortBy, sortOrder)
+  }
+
+  const handleNextPage = () => {
+    if (!hasMore && page >= totalPages) return
+    const next = page + 1
+    setPage(next)
+    void fetchData(next, sortBy, sortOrder)
+  }
 
   useEffect(() => {
     if (open && roomId && connectionState === "connected") {
@@ -164,7 +223,7 @@ export function RoomMembersDialog({
         return
       }
       toast.success(data.removed ? "User removed from room" : "Vote recorded")
-      fetchData()
+      void fetchData(page, sortBy, sortOrder)
     } catch {
       toast.error("Failed to submit vote")
     } finally {
@@ -182,32 +241,86 @@ export function RoomMembersDialog({
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
         <Dialog.Content
           className={cn(
-            "fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2",
+            "fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2",
             "rounded-2xl border border-border/60 bg-[#0f0f16] p-5 shadow-xl",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
             "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
           )}
         >
-          <div className="flex items-center gap-2 border-b border-border/60 pb-3 mb-3">
-            <Users className="h-5 w-5 text-primary" />
-            <Dialog.Title className="text-sm font-semibold">
-              Room members & voting
-            </Dialog.Title>
+          <div className="flex items-center justify-between border-b border-border/60 pb-3 mb-3">
+            <div className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-primary" />
+              <Dialog.Title className="text-sm font-semibold">
+                Room Members ({totalCount})
+              </Dialog.Title>
+            </div>
+            {totalPages > 1 && (
+              <span className="text-xs text-muted-foreground">
+                Page {page} of {totalPages}
+              </span>
+            )}
           </div>
+
           <p className="text-xs text-muted-foreground mb-3">
             Wallet-based votes to remove a member. Majority of active members removes them.
           </p>
+
+          {/* Sort Controls */}
+          <div className="flex items-center justify-between mb-3 px-1 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <ArrowUpDown className="h-3.5 w-3.5" /> Sort by:
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleSortChange("joinDate")}
+                className={cn(
+                  "rounded-md px-2 py-0.5 transition",
+                  sortBy === "joinDate"
+                    ? "bg-primary/20 text-primary font-medium"
+                    : "hover:bg-muted/40 text-muted-foreground"
+                )}
+              >
+                Join Date {sortBy === "joinDate" && (sortOrder === "asc" ? "↑" : "↓")}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSortChange("role")}
+                className={cn(
+                  "rounded-md px-2 py-0.5 transition",
+                  sortBy === "role"
+                    ? "bg-primary/20 text-primary font-medium"
+                    : "hover:bg-muted/40 text-muted-foreground"
+                )}
+              >
+                Role {sortBy === "role" && (sortOrder === "asc" ? "↑" : "↓")}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSortChange("username")}
+                className={cn(
+                  "rounded-md px-2 py-0.5 transition",
+                  sortBy === "username"
+                    ? "bg-primary/20 text-primary font-medium"
+                    : "hover:bg-muted/40 text-muted-foreground"
+                )}
+              >
+                Name {sortBy === "username" && (sortOrder === "asc" ? "↑" : "↓")}
+              </button>
+            </div>
+          </div>
+
           {loading ? (
-            <div className="flex items-center justify-center py-8 text-muted-foreground">
+            <div className="flex items-center justify-center py-10 text-muted-foreground">
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
           ) : members.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4">
-              No members yet, or you need to sign in.
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              No members found in this room.
             </p>
           ) : (
-            <ul className="space-y-2 max-h-64 overflow-y-auto">
+            <ul className="space-y-2 max-h-72 overflow-y-auto pr-1">
               {mergedMembers.map((m) => {
                 const voteCount = votes[m.user_id]?.count ?? 0
                 const isVoting = votingId === m.user_id
@@ -223,12 +336,24 @@ export function RoomMembersDialog({
                         className="shrink-0"
                       />
                       <div className="min-w-0">
-                        <WalletAddress
-                          address={m.wallet_address}
-                          fallback={m.display_name || displayId(m.user_id)}
-                          className="max-w-full"
-                          addressClassName="text-sm"
-                        />
+                        <div className="flex items-center gap-1.5">
+                          <WalletAddress
+                            address={m.wallet_address}
+                            fallback={m.display_name || displayId(m.user_id)}
+                            className="max-w-full"
+                            addressClassName="text-sm font-medium"
+                          />
+                          {m.role === "owner" && (
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 px-1.5 py-0.2 text-[10px] font-semibold">
+                              <Crown className="h-2.5 w-2.5" /> Owner
+                            </span>
+                          )}
+                          {m.role === "moderator" && (
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30 px-1.5 py-0.2 text-[10px] font-semibold">
+                              <Shield className="h-2.5 w-2.5" /> Mod
+                            </span>
+                          )}
+                        </div>
                         {m.display_name && (
                           <p className="truncate text-[11px] text-muted-foreground">
                             {m.display_name}
@@ -250,7 +375,7 @@ export function RoomMembersDialog({
                         className={cn(
                           "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium",
                           "bg-destructive/20 text-destructive hover:bg-destructive/30 border border-destructive/40",
-                          "disabled:opacity-50"
+                          "disabled:opacity-50 transition"
                         )}
                       >
                         {isVoting ? (
@@ -266,11 +391,32 @@ export function RoomMembersDialog({
               })}
             </ul>
           )}
-          <div className="mt-4 flex justify-end">
+
+          {/* Pagination & Close Footer */}
+          <div className="mt-4 flex items-center justify-between border-t border-border/60 pt-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handlePrevPage}
+                disabled={page <= 1 || loading}
+                className="inline-flex items-center gap-1 rounded-lg border border-border/60 bg-[#181822] px-2.5 py-1.5 text-xs font-medium hover:bg-[#232330] transition disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" /> Previous
+              </button>
+              <button
+                type="button"
+                onClick={handleNextPage}
+                disabled={(!hasMore && page >= totalPages) || loading || members.length === 0}
+                className="inline-flex items-center gap-1 rounded-lg border border-border/60 bg-[#181822] px-2.5 py-1.5 text-xs font-medium hover:bg-[#232330] transition disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
             <Dialog.Close asChild>
               <button
                 type="button"
-                className="rounded-lg border border-border/60 bg-[#181822] px-3 py-1.5 text-xs font-medium hover:bg-[#232330] transition"
+                className="rounded-lg border border-border/60 bg-[#181822] px-3.5 py-1.5 text-xs font-medium hover:bg-[#232330] transition"
               >
                 Close
               </button>
@@ -281,3 +427,4 @@ export function RoomMembersDialog({
     </Dialog.Root>
   )
 }
+

@@ -1,6 +1,11 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { MessageItem } from "./MessageItem";
+
+afterEach(() => {
+  cleanup();
+});
 
 const baseMessage = {
   id: "m1",
@@ -23,4 +28,72 @@ describe("MessageItem", () => {
     expect(screen.getByText("Hello")).toBeDefined();
     expect(screen.queryByText("Edited")).toBeNull();
   });
-});
+
+  it("renders quoted message when replyTo is present", () => {
+    render(
+      <MessageItem
+        message={{
+          ...baseMessage,
+          replyTo: {
+            id: "m0",
+            text: "Original message text",
+            sender: "wallet_xyz",
+          },
+        }}
+      />
+    );
+    expect(screen.getByText("Original message text")).toBeDefined();
+    expect(screen.getByText("wallet_xyz")).toBeDefined();
+  });
+
+  it("calls onJumpToMessage when quoted message is clicked", () => {
+    const handleJump = vi.fn();
+    render(
+      <MessageItem
+        message={{
+          ...baseMessage,
+          replyTo: {
+            id: "m0",
+            text: "Original message text",
+            sender: "wallet_xyz",
+          },
+        }}
+        onJumpToMessage={handleJump}
+      />
+    );
+
+    const quoteEl = screen.getByText("Original message text");
+    fireEvent.click(quoteEl);
+    expect(handleJump).toHaveBeenCalledWith("m0");
+  });
+
+  it("calls onReply when reply button is clicked", () => {
+    const handleReply = vi.fn();
+    render(
+      <MessageItem
+        message={baseMessage}
+        onReply={handleReply}
+      />
+    );
+
+    const replyBtn = screen.getByRole("button", { name: /reply to message/i });
+    fireEvent.click(replyBtn);
+    expect(handleReply).toHaveBeenCalledWith(baseMessage);
+  });
+
+  it("gracefully displays deleted original message in reply quote", () => {
+    render(
+      <MessageItem
+        message={{
+          ...baseMessage,
+          replyTo: {
+            id: "deleted_1",
+            text: "",
+            isDeleted: true,
+          },
+        }}
+      />
+    );
+    expect(screen.getByText("Original message was deleted")).toBeDefined();
+  });
+});
