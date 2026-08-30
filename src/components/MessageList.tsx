@@ -9,6 +9,8 @@ interface Props {
   isLoadingMore?: boolean;
   hasMore?: boolean;
   firstMessageId?: string | null;
+  onReply?: (message: Message) => void;
+  onJumpToMessage?: (messageId: string) => void;
 }
 
 export const MessageList: React.FC<Props> = ({
@@ -18,6 +20,8 @@ export const MessageList: React.FC<Props> = ({
   isLoadingMore = false,
   hasMore = false,
   firstMessageId,
+  onReply,
+  onJumpToMessage,
 }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -128,7 +132,11 @@ export const MessageList: React.FC<Props> = ({
           ref={index === 0 ? firstMessageRef : undefined}
           data-message-id={msg.id}
         >
-          <MessageItem message={msg} />
+          <MessageItem
+            message={msg}
+            onReply={onReply}
+            onJumpToMessage={onJumpToMessage}
+          />
         </div>
       ))}
       

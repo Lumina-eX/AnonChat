@@ -7,9 +7,12 @@ import { ChatThemeProvider } from "@/lib/chat-theme";
 import { WebSocketProvider } from "@/lib/websocket/context"
 import { ConnectionStatusBanner } from "@/components/ConnectionStatusBanner"
 
+
 // installed the proper toast module
 import { Toaster } from "react-hot-toast";
+
 import "./globals.css";
+
 
 const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
