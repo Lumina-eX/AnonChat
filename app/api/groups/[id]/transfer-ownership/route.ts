@@ -123,6 +123,7 @@ export async function POST(
     const auth = await verifyWalletAuthorization(
       { walletAddress, signature },
       "transfer_ownership",
+      { supabase, groupId },
     )
     if (!auth.ok) {
       return auth.response

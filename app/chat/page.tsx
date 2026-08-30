@@ -44,6 +44,7 @@ import {
   ChevronRight,
   X,
   ShieldCheck,
+  Reply,
 } from "lucide-react";
 import { StellarNetworkStatus } from "@/components/stellar-network-status";
 import { WalletNetworkWarning } from "@/components/wallet-network-warning";
@@ -82,6 +83,16 @@ interface DBMessage {
     content: string;
     created_at: string;
   } | null;
+  reply_to_id?: string | null;
+  reply_to?: {
+    id: string;
+    content: string;
+    user_id?: string;
+  } | null;
+  profiles?: {
+    display_name?: string;
+    avatar_url?: string;
+  };
 }
 
 export default function ChatPage() {
@@ -89,6 +100,8 @@ export default function ChatPage() {
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const [roomMembersOpen, setRoomMembersOpen] = useState(false);
   const [auditTrailOpen, setAuditTrailOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -243,6 +256,35 @@ export default function ChatPage() {
           }
         : undefined,
     }),
+    (message: DBMessage): ChatMessage => {
+      let replyTo: ChatMessage["replyTo"] = null;
+      if (message.reply_to) {
+        replyTo = {
+          id: message.reply_to.id,
+          text: message.reply_to.content,
+          sender: message.reply_to.user_id === currentUser?.id ? "You" : "Them",
+        };
+      } else if (message.reply_to_id) {
+        replyTo = {
+          id: message.reply_to_id,
+          text: "Original message",
+        };
+      }
+
+      return {
+        id: message.id,
+        author: message.user_id === currentUser?.id ? "me" : "them",
+        text: message.content,
+        time: new Date(message.created_at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }),
+        status: "read",
+        replyTo,
+        senderName: message.profiles?.display_name,
+      };
+    },
     [currentUser?.id],
   );
 
@@ -361,7 +403,25 @@ export default function ChatPage() {
         }
 
         const fetchedMessages = data.messages || [];
-        const parsed = fetchedMessages.map(transformToChatMessage).reverse();
+        const messageMap = new Map<string, DBMessage>();
+        fetchedMessages.forEach((m: DBMessage) => messageMap.set(m.id, m));
+
+        const parsed = fetchedMessages
+          .map((m: DBMessage) => {
+            const chatMsg = transformToChatMessage(m);
+            if (m.reply_to_id && (!chatMsg.replyTo || chatMsg.replyTo.text === "Original message")) {
+              const parent = messageMap.get(m.reply_to_id);
+              if (parent) {
+                chatMsg.replyTo = {
+                  id: parent.id,
+                  text: parent.content,
+                  sender: parent.user_id === currentUser?.id ? "You" : (parent.profiles?.display_name || "Them"),
+                };
+              }
+            }
+            return chatMsg;
+          })
+          .reverse();
 
         setMessagesByChat((prev) => ({
           ...prev,
@@ -469,8 +529,18 @@ export default function ChatPage() {
 
   const handleSelectChat = useCallback((chatId: string) => {
     setSelectedChatId(chatId);
+    setReplyingToMessage(null);
     setMobileSidebarOpen(false);
     setActiveMobileTab("conversation");
+  }, []);
+
+  const handleReplyToMessage = useCallback((message: ChatMessage) => {
+    setReplyingToMessage(message);
+    composerInputRef.current?.focus();
+  }, []);
+
+  const handleCancelReply = useCallback(() => {
+    setReplyingToMessage(null);
   }, []);
 
   const isMobileSidebarVisible =
@@ -487,6 +557,8 @@ export default function ChatPage() {
       return;
     }
 
+    const currentReply = replyingToMessage;
+    const currentChat = chats.find((chat) => chat.id === selectedChatId);
     const tempId = `temp_${Date.now()}`;
     const optimisticMessage: ChatMessage = {
       id: tempId,
@@ -524,6 +596,7 @@ export default function ChatPage() {
           room_id: selectedChatId,
           content: trimmedMessage,
           ...(replyTarget ? { reply_to_id: replyTarget.id } : {}),
+          reply_to_id: currentReply?.id || null,
         }),
       });
 
@@ -687,9 +760,15 @@ export default function ChatPage() {
       toast.error(error instanceof Error ? error.message : "Could not report message");
     }
   }, []);
+  }, [inputMessage, selectedChatId, replyingToMessage, transformToChatMessage, chats]);
 
   const handleComposerKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key === "Escape" && replyingToMessage) {
+        event.preventDefault();
+        setReplyingToMessage(null);
+        return;
+      }
       if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
         void handleSendMessage();
@@ -700,7 +779,7 @@ export default function ChatPage() {
         void handleSendMessage();
       }
     },
-    [handleSendMessage],
+    [handleSendMessage, replyingToMessage],
   );
 
   // Global Keyboard Shortcut Listener
@@ -713,9 +792,11 @@ export default function ChatPage() {
         return;
       }
 
-      // Esc -> Close active modals, dropdowns, or sidebars
+      // Esc -> Close active modals, dropdowns, reply mode, or sidebars
       if (event.key === "Escape") {
-        if (roomMembersOpen) {
+        if (replyingToMessage) {
+          setReplyingToMessage(null);
+        } else if (roomMembersOpen) {
           setRoomMembersOpen(false);
         } else if (mobileSidebarOpen) {
           setMobileSidebarOpen(false);
@@ -725,7 +806,7 @@ export default function ChatPage() {
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [roomMembersOpen, mobileSidebarOpen]);
+  }, [roomMembersOpen, mobileSidebarOpen, replyingToMessage]);
 
   const filteredChats = useMemo(() => {
     if (!query.trim()) return chats;
@@ -1150,6 +1231,44 @@ export default function ChatPage() {
                           type="button"
                           onClick={() => setReplyingTo(null)}
                           className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        filteredMessages.map((message) => (
+                          <ChatMessageBubble 
+                            key={message.id} 
+                            message={message} 
+                            searchQuery={messageSearchQuery}
+                            isPinned={pinnedIds.includes(message.id)}
+                            isAdmin={isAdmin}
+                            onTogglePin={(msgId) => togglePinMessage(selectedChat.id, msgId)}
+                            isHighlighted={highlightedMessageId === message.id}
+                            onReply={handleReplyToMessage}
+                            onJumpToMessage={handleScrollToMessage}
+                          />
+                        ))}
+                   </div>
+
+                  <div className="border-t border-border/70 bg-card/80 backdrop-blur-sm">
+                    {replyingToMessage && (
+                      <div className="px-4 py-2 bg-muted/60 border-b border-border/60 flex items-center justify-between gap-3 text-xs animate-in fade-in slide-in-from-bottom-2 duration-200">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div className="p-1 rounded-md bg-primary/10 text-primary shrink-0">
+                            <Reply className="h-3.5 w-3.5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-primary text-[11px]">
+                                Replying to {replyingToMessage.author === "me" ? "yourself" : (replyingToMessage.senderName || selectedChat.name || "message")}
+                              </span>
+                            </div>
+                            <p className="text-muted-foreground truncate text-xs mt-0.5">
+                              {replyingToMessage.text}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleCancelReply}
+                          className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition"
+                          title="Cancel reply (Esc)"
                           aria-label="Cancel reply"
                         >
                           <X className="h-4 w-4" />
@@ -1158,6 +1277,7 @@ export default function ChatPage() {
                     )}
 
                     <div className="flex items-end gap-2 sm:gap-3">
+                    <div className="p-3 sm:p-4 flex items-end gap-2 sm:gap-3">
                       <button
                         type="button"
                         className="h-10 w-10 shrink-0 rounded-full border border-border/80 flex items-center justify-center text-muted-foreground hover:bg-muted/40"
@@ -1173,6 +1293,7 @@ export default function ChatPage() {
 
                       <textarea
                         ref={composerRef}
+                        ref={composerInputRef}
                         value={inputMessage}
                         onChange={(event) =>
                           setInputMessage(event.target.value)

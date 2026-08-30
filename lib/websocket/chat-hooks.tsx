@@ -34,6 +34,7 @@ export function useRealtimeChat(roomId: string, userId?: string) {
   const [typingUsers, setTypingUsers] = useState<Map<string, TypingIndicator>>(new Map())
   const [roomUsers, setRoomUsers] = useState<Set<string>>(new Set())
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "disconnected">("disconnected")
+  const [removedFromRoom, setRemovedFromRoom] = useState(false)
 
   const {
     sendMessage,
@@ -113,6 +114,16 @@ export function useRealtimeChat(roomId: string, userId?: string) {
     }
   })
 
+  // A removal event is sent directly to the removed user's active sockets.
+  useWebSocketMessage("member_removed", (msg: WebSocketMessage) => {
+    const payload = msg.payload as any
+    if (payload.groupId !== roomId) return
+
+    setRemovedFromRoom(true)
+    leaveRoom(roomId)
+    toast.error("You were removed from this group")
+  })
+
   // Listen for room leaves
   useWebSocketMessage("room_leave", (msg: WebSocketMessage) => {
     if ((msg.payload as any).roomId === roomId) {
@@ -179,7 +190,7 @@ export function useRealtimeChat(roomId: string, userId?: string) {
 
   const handleSendMessage = useCallback(
     (content: string) => {
-      if (!content.trim() || !roomId) return
+      if (!content.trim() || !roomId || removedFromRoom) return
 
       // Optimistically add message
       const optimisticMessage: RealtimeMessageUpdate = {
@@ -202,7 +213,7 @@ export function useRealtimeChat(roomId: string, userId?: string) {
         toast.error(result.error || "Failed to send message")
       }
     },
-    [roomId, userId, sendMessage],
+    [roomId, userId, removedFromRoom, sendMessage],
   )
 
   const handleEditMessage = useCallback(

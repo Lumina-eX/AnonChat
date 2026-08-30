@@ -8,6 +8,7 @@ import {
 } from "@/lib/wallet-message-rate-limit"
 import { getRoomTTL } from "@/lib/ephemeral-cleanup"
 import { type NextRequest, NextResponse } from "next/server"
+import { validateMessage, ValidationErrorType } from "@/lib/middleware/message-validation"
 
 export async function GET(request: NextRequest) {
   try {
@@ -220,6 +221,23 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "id and content are required" }, { status: 400 })
     }
 
+    // Validate message content for edits
+    const validation = validateMessage({ content, id }, 'http')
+    if (!validation.isValid) {
+      const statusCode = validation.error?.type === ValidationErrorType.MESSAGE_TOO_LONG ? 413 : 400
+      return NextResponse.json(
+        {
+          error: validation.error?.message,
+          type: validation.error?.type,
+          details: validation.error?.details,
+        },
+        { status: statusCode }
+      )
+    }
+
+    // Use sanitized content
+    const sanitizedContent = validation.sanitized?.content || content
+
     const windowMinutes = Number(editWindowMinutes ?? process.env.MESSAGE_EDIT_WINDOW_MINUTES ?? 5)
     const windowMs = windowMinutes * 60 * 1000
 
@@ -257,7 +275,7 @@ export async function PUT(request: NextRequest) {
     const { data, error } = await supabase
       .from("messages")
       .update({
-        content,
+        content: sanitizedContent,
         edited_at: new Date(now).toISOString(),
       })
       .eq("id", id)
@@ -288,6 +306,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { room_id, content, reply_to_id, is_ephemeral = false } = body
+    const { room_id, content, is_ephemeral = false, reply_to_id = null } = body
 
     if (!room_id || typeof room_id !== "string" || typeof content !== "string" || !content.trim()) {
       return NextResponse.json({ error: "room_id and content are required" }, { status: 400 })
@@ -296,6 +315,23 @@ export async function POST(request: NextRequest) {
     if (reply_to_id !== undefined && reply_to_id !== null && typeof reply_to_id !== "string") {
       return NextResponse.json({ error: "reply_to_id must be a string" }, { status: 400 })
     }
+
+    // Validate message content
+    const validation = validateMessage({ content, roomId: room_id }, 'http')
+    if (!validation.isValid) {
+      const statusCode = validation.error?.type === ValidationErrorType.MESSAGE_TOO_LONG ? 413 : 400
+      return NextResponse.json(
+        {
+          error: validation.error?.message,
+          type: validation.error?.type,
+          details: validation.error?.details,
+        },
+        { status: statusCode }
+      )
+    }
+
+    // Use sanitized content
+    const sanitizedContent = validation.sanitized?.content || content
 
     const walletKey = getWalletRateLimitKey(user)
     const policy = resolveWalletMessageRatePolicy(walletKey, room_id)
@@ -372,9 +408,14 @@ export async function POST(request: NextRequest) {
       user_id: user.id,
       room_id,
       content: content.trim(),
+      content: sanitizedContent,
       is_encrypted: false,
       status: "sent",
       ...(reply_to_id ? { reply_to_id } : {}),
+    }
+
+    if (reply_to_id) {
+      messageData.reply_to_id = reply_to_id
     }
 
     // Handle ephemeral messages
