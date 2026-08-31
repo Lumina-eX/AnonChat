@@ -30,7 +30,7 @@ import {
   resolveWalletFromUser,
   verifyWalletAuthorization,
 } from "@/lib/auth/wallet-authorization"
-import { verifyWalletSignature } from "@/lib/auth/stellar-verify";
+import { verifyWalletSignature } from "@/lib/auth/stellar-verify"
 import { auditLog } from "@/lib/auth/signed-message-middleware"
 import { insertRoomActivity } from "@/lib/activity/room-activity"
 import {
@@ -167,6 +167,13 @@ export async function POST(
     }
 
     const isValid = verifyWalletSignature(callerWallet, nonce, signature)
+
+    if (!isValid) {
+      return NextResponse.json(
+        { error: "Invalid signature. Please sign the current nonce with your wallet." },
+        { status: 401 }
+      )
+    }
 
     // ── 6. Verify the group exists and the caller is the current owner ────────
     const ownerCheck = await requireGroupOwner({
@@ -344,7 +351,7 @@ export async function POST(
         new_owner: newOwnerWalletAddress,
         timestamp: new Date().toISOString(),
       }
-      const metadataHash = computeHash(transferMetadata as any)
+      const metadataHash = computeHash(transferMetadata)
       const result = await submitMetadataHash(groupId, metadataHash)
 
       if (result.success && result.transactionHash) {
@@ -365,7 +372,7 @@ export async function POST(
           correlationId
         )
       }
-    } catch (blockchainErr: any) {
+    } catch (blockchainErr) {
       // Non-fatal: the DB transfer is the source of truth
       logBlockchainOperation(
         "error",
@@ -373,8 +380,8 @@ export async function POST(
         {
           groupId,
           error: {
-            type: blockchainErr.name || "UnknownError",
-            message: blockchainErr.message || "Unknown error",
+            type: blockchainErr instanceof Error ? blockchainErr.name : "UnknownError",
+            message: blockchainErr instanceof Error ? blockchainErr.message : "Unknown error",
           },
         },
         correlationId
