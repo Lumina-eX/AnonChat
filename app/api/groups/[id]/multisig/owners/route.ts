@@ -232,7 +232,6 @@ export async function POST(
       }
 
       // Resolve user ID for the new wallet
-      const newOwnerEmail = `${newOwnerWallet.toLowerCase()}@wallet.anonchat.local`;
       const { data: newOwnerUser } = await supabase
         .from("profiles")
         .select("id")
