@@ -11,6 +11,7 @@ interface Props {
   firstMessageId?: string | null;
   onReply?: (message: Message) => void;
   onJumpToMessage?: (messageId: string) => void;
+  onRetry?: (messageId: string) => void;
 }
 
 export const MessageList: React.FC<Props> = ({
@@ -22,6 +23,7 @@ export const MessageList: React.FC<Props> = ({
   firstMessageId,
   onReply,
   onJumpToMessage,
+  onRetry,
 }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -136,6 +138,7 @@ export const MessageList: React.FC<Props> = ({
             message={msg}
             onReply={onReply}
             onJumpToMessage={onJumpToMessage}
+            onRetry={onRetry}
           />
         </div>
       ))}

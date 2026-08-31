@@ -12,6 +12,7 @@ export default defineConfig({
       "components/chat-message-bubble.test.tsx",
       "components/MessageItem.test.tsx",
       "src/components/MessageInput.test.tsx",
+      "src/hooks/useMessages.test.ts",
       "tests/group-roles.test.ts",
       "tests/wallet-ownership-proof.test.ts",
       "tests/group-members-pagination.test.ts",

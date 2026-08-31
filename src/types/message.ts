@@ -1,3 +1,5 @@
+export type MessageStatus = 'sending' | 'sent' | 'failed';
+
 export interface ReplyToInfo {
   id: string;
   text: string;
@@ -14,5 +16,7 @@ export interface Message {
   isEncrypted: boolean;
   editedAt?: Date;
   replyTo?: ReplyToInfo | null;
+  status?: MessageStatus;
+  tempId?: string;
 }
 
