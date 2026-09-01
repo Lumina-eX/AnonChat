@@ -20,7 +20,6 @@ import {
 import { auditLog } from "@/lib/auth/signed-message-middleware";
 import {
   requiresMultisigApproval,
-  isMultisigOwner,
   getProposalWithApprovals,
   markProposalExecuted,
 } from "@/lib/groups/multisig";
@@ -159,12 +158,6 @@ export async function DELETE(
       if (new Date(proposal.expiresAt) < new Date()) {
         return NextResponse.json({ error: "Proposal has expired" }, { status: 410 });
       }
-    } else if (group.created_by !== user.id) {
-      // Single-owner path already checked above; this branch is unreachable but kept for safety
-      return NextResponse.json(
-        { error: "Forbidden. Only the group owner can delete this group." },
-        { status: 403 },
-      );
     }
 
     const { data: rpcData, error: rpcError } = await supabase
