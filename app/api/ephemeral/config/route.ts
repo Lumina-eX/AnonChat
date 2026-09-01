@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { logger } from "@/lib/logger";
-import {
-  getRoomTTL,
-  getGlobalTTL,
-  cleanupExpiredMessages,
-  getCleanupLogs,
-  getCleanupStats,
-} from "@/lib/ephemeral-cleanup";
 import { EPHEMERAL_CONFIG } from "@/lib/ephemeral-config";
 
 /**
@@ -50,7 +43,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const result: any = {};
+    const result: Record<string, unknown> = {};
 
     // Get room-specific config
     if ((type === "both" || type === "room") && roomId) {
