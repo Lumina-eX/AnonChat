@@ -14,6 +14,7 @@ export default defineConfig({
       "src/components/MessageInput.test.tsx",
       "src/hooks/useMessages.test.ts",
       "tests/group-roles.test.ts",
+      "lib/auth/session-store.test.ts",
       "tests/wallet-ownership-proof.test.ts",
       "tests/group-members-pagination.test.ts",
       "tests/stellar-transaction-history.test.ts",

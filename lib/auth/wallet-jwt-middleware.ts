@@ -5,6 +5,7 @@ import {
   WALLET_ACCESS_COOKIE,
   WALLET_ADDRESS_HEADER,
 } from "@/lib/auth/wallet-jwt";
+import { validateSession } from "@/lib/auth/session-store";
 
 const PUBLIC_API_PREFIXES = [
   "/api/auth/nonce",
@@ -49,6 +50,8 @@ type WalletApiAuthResult =
 /**
  * Validates wallet JWT on protected API routes and forwards the wallet address
  * via x-wallet-address. Returns a 401 response when validation fails.
+ *
+ * Also validates that the session referenced in the JWT is still active.
  */
 export async function enforceWalletApiAuth(
   request: NextRequest,
@@ -90,6 +93,20 @@ export async function enforceWalletApiAuth(
         { status: 401 },
       ),
     };
+  }
+
+  // Validate session is still active (not terminated)
+  if (claims.sessionId) {
+    const session = await validateSession(claims.sessionId);
+    if (!session) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { error: "Session has been terminated. Please re-authenticate." },
+          { status: 401 },
+        ),
+      };
+    }
   }
 
   const requestHeaders = new Headers(request.headers);
