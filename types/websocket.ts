@@ -13,6 +13,7 @@ export type WebSocketServerEventType =
   | "presence_update"
   | "presence_snapshot"
   | "notification"
+  | "member_removed"
   | "error"
   | "connection_established"
 

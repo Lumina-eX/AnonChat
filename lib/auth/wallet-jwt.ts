@@ -27,6 +27,7 @@ export interface WalletAccessClaims extends JWTPayload {
   walletAddress: string;
   type: "access";
   sigVerifiedAt: number;
+  sessionId?: string;
 }
 
 export interface WalletRefreshClaims extends JWTPayload {
@@ -52,8 +53,13 @@ export function getRefreshTokenMaxAgeSec(): number {
 export async function signWalletAccessToken(
   walletAddress: string,
   sigVerifiedAt: number,
+  sessionId?: string,
 ): Promise<string> {
-  return new SignJWT({ walletAddress, type: "access", sigVerifiedAt })
+  const payload: Record<string, unknown> = { walletAddress, type: "access", sigVerifiedAt };
+  if (sessionId) {
+    payload.sessionId = sessionId;
+  }
+  return new SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${ACCESS_TOKEN_TTL_SEC}s`)

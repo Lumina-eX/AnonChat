@@ -5,11 +5,12 @@ import { useMessages } from '../hooks/useMessages';
 import { useChatSubscription } from '../hooks/useChatSubscription';
 import { Settings } from 'lucide-react';
 import { GroupSettingsPanel } from './GroupSettingsPanel';
+import { Message, ReplyToInfo } from '../types/message';
 
 interface Props {
   walletAddress: string;
   sdk: any;
-  onSendToChain?: (text: string) => Promise<void>;
+  onSendToChain?: (text: string) => Promise<string | void>;
   roomId?: string;
 }
 
@@ -20,10 +21,14 @@ export const ChatWindow: React.FC<Props> = ({
   roomId
 }) => {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<ReplyToInfo | null>(null);
 
   const {
     messages,
     addMessage,
+    updateMessageStatus,
+    retryMessage,
+    removeMessage,
     loadMoreMessages,
     isLoading,
     isLoadingMore,
@@ -33,14 +38,67 @@ export const ChatWindow: React.FC<Props> = ({
 
   useChatSubscription(sdk, addMessage);
 
-  const handleSend = useCallback(async (text: string) => {
-    addMessage({ text, sender: walletAddress, isOwn: true, isEncrypted: true });
+  const handleSend = useCallback(async (text: string, replyTo?: ReplyToInfo | null) => {
+    const tempId = addMessage({
+      text,
+      sender: walletAddress,
+      isOwn: true,
+      isEncrypted: true,
+      status: 'sending',
+      replyTo: replyTo || null,
+    });
+    setReplyingTo(null);
+
     try {
-      await onSendToChain?.(text);
+      const serverId = await onSendToChain?.(text);
+      if (serverId) {
+        updateMessageStatus(tempId, 'sent', serverId);
+      } else {
+        updateMessageStatus(tempId, 'sent');
+      }
     } catch (err) {
       console.error('Failed to send message to chain:', err);
+      updateMessageStatus(tempId, 'failed');
     }
-  }, [addMessage, walletAddress, onSendToChain]);
+  }, [addMessage, updateMessageStatus, walletAddress, onSendToChain]);
+
+  const handleRetry = useCallback((messageId: string) => {
+    const msg = messages.find((m) => m.id === messageId || m.tempId === messageId);
+    if (!msg) return;
+
+    retryMessage(messageId, async (retryText) => {
+      try {
+        const serverId = await onSendToChain?.(retryText);
+        if (serverId) {
+          updateMessageStatus(messageId, 'sent', serverId);
+        } else {
+          updateMessageStatus(messageId, 'sent');
+        }
+      } catch (err) {
+        console.error('Retry failed:', err);
+        throw err;
+      }
+    });
+  }, [messages, retryMessage, onSendToChain, updateMessageStatus]);
+
+  const handleReply = useCallback((message: Message) => {
+    setReplyingTo({
+      id: message.id,
+      text: message.text,
+      sender: message.isOwn ? 'You' : message.sender,
+    });
+  }, []);
+
+  const handleJumpToMessage = useCallback((msgId: string) => {
+    const el = document.getElementById(`msg-${msgId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ring-2', 'ring-indigo-500');
+      setTimeout(() => {
+        el.classList.remove('ring-2', 'ring-indigo-500');
+      }, 2000);
+    }
+  }, []);
 
   const currentRoomName = roomId ? `Room: ${roomId.substring(0, 8)}...` : 'Main Anonymous Chat';
 
@@ -70,9 +128,16 @@ export const ChatWindow: React.FC<Props> = ({
         isLoadingMore={isLoadingMore}
         hasMore={hasMore}
         firstMessageId={firstMessageId}
+        onReply={handleReply}
+        onJumpToMessage={handleJumpToMessage}
+        onRetry={handleRetry}
       />
 
-      <MessageInput onSend={handleSend} />
+      <MessageInput
+        onSend={handleSend}
+        replyingTo={replyingTo}
+        onCancelReply={() => setReplyingTo(null)}
+      />
 
       <GroupSettingsPanel
         isOpen={isPanelOpen}

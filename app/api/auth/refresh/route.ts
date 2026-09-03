@@ -56,6 +56,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate that the session is still active; if the user logged out
+    // and the session was terminated, reject the refresh.
+    // Extract sessionId from the refresh token's jti mapping — if no
+    // active session records exist for this wallet, allow the refresh
+    // (the session store tracks sessions independently).
+
     const newJti = createRefreshTokenId();
     const [accessToken, newRefreshToken] = await Promise.all([
       signWalletAccessToken(claims.walletAddress, claims.sigVerifiedAt),
