@@ -7,6 +7,7 @@ import {
   resolveWalletMessageRatePolicy,
 } from "@/lib/wallet-message-rate-limit"
 import { getRoomTTL } from "@/lib/ephemeral-cleanup"
+import { logger } from "@/lib/logger"
 import { type NextRequest, NextResponse } from "next/server"
 
 export async function GET(request: NextRequest) {
@@ -194,10 +195,39 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { room_id, content, is_ephemeral = false } = body
+    const { room_id, content, is_ephemeral = false, client_message_id } = body
 
     if (!room_id || !content) {
       return NextResponse.json({ error: "room_id and content are required" }, { status: 400 })
+    }
+
+    // ------------------------------------------------------------------
+    // Idempotency check: if the client supplied a client_message_id and we
+    // already have a row for (user_id, client_message_id), return it as-is
+    // instead of inserting a duplicate.
+    // ------------------------------------------------------------------
+    if (client_message_id) {
+      const { data: existing, error: lookupErr } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("client_message_id", client_message_id)
+        .maybeSingle()
+
+      if (lookupErr) throw lookupErr
+
+      if (existing) {
+        logger.warn("idempotent_duplicate_http", {
+          user_id: user.id,
+          room_id,
+          client_message_id,
+          existing_message_id: existing.id,
+        })
+        return NextResponse.json(
+          { message: existing, success: true, duplicate: true },
+          { status: 200 },
+        )
+      }
     }
 
     const walletKey = getWalletRateLimitKey(user)
@@ -258,12 +288,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Prepare message data
-    const messageData: any = {
+    const messageData: Record<string, unknown> = {
       user_id: user.id,
       room_id,
       content,
       is_encrypted: false,
       status: "sent",
+      ...(client_message_id ? { client_message_id } : {}),
     }
 
     // Handle ephemeral messages
@@ -278,7 +309,31 @@ export async function POST(request: NextRequest) {
       .insert(messageData)
       .select()
 
-    if (error) throw error
+    if (error) {
+      // Unique constraint violation (concurrent duplicate) — treat as idempotent hit
+      if (error.code === "23505") {
+        const { data: concurrent } = await supabase
+          .from("messages")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("client_message_id", client_message_id)
+          .maybeSingle()
+
+        if (concurrent) {
+          logger.warn("idempotent_duplicate_http_race", {
+            user_id: user.id,
+            room_id,
+            client_message_id,
+            existing_message_id: concurrent.id,
+          })
+          return NextResponse.json(
+            { message: concurrent, success: true, duplicate: true },
+            { status: 200 },
+          )
+        }
+      }
+      throw error
+    }
 
     return NextResponse.json({ message: data[0], success: true }, { status: 201 })
   } catch (error) {

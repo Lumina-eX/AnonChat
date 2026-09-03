@@ -55,6 +55,8 @@ export interface RoomPresence {
 
 export interface ChatMessage {
   id: string
+  /** Client-generated UUID used for idempotent delivery. */
+  clientMessageId?: string
   roomId: string
   userId: string
   displayName: string

@@ -1,6 +1,7 @@
 import WebSocket, { WebSocketServer } from "ws"
 import http from "http"
 import { randomUUID } from "crypto"
+import { createAdminClient } from "@/lib/supabase/server"
 
 // Type definitions
 interface User {
@@ -364,6 +365,8 @@ export function createWebSocketServer(port: number = 3001) {
           case "send_message": {
             const msgRoomId = message.payload.roomId
             const msgUserId = connection.userId
+            const msgContent = message.payload.content as string | undefined
+            const clientMessageId = message.payload.clientMessageId as string | undefined
 
             if (!msgUserId) {
               ws.send(
@@ -376,21 +379,131 @@ export function createWebSocketServer(port: number = 3001) {
               break
             }
 
-            const broadcastMessage = {
-              type: "message",
-              payload: {
-                id: randomUUID(),
-                roomId: msgRoomId,
-                userId: msgUserId,
-                displayName: connection.user?.displayName,
-                avatarUrl: connection.user?.avatarUrl,
-                content: message.payload.content,
-                createdAt: Date.now(),
-              },
-              timestamp: Date.now(),
-            }
+            // ------------------------------------------------------------------
+            // Persist message to Supabase with idempotency check.
+            // We use the admin client so the WS server (Node.js process) can
+            // bypass RLS and write on behalf of the authenticated user.
+            // ------------------------------------------------------------------
+            ;(async () => {
+              try {
+                const supabase = createAdminClient()
 
-            broadcastToRoom(msgRoomId, broadcastMessage)
+                // 1. If the client supplied a clientMessageId, check for a duplicate
+                if (clientMessageId) {
+                  const { data: existing } = await supabase
+                    .from("messages")
+                    .select("*")
+                    .eq("user_id", msgUserId)
+                    .eq("client_message_id", clientMessageId)
+                    .maybeSingle()
+
+                  if (existing) {
+                    console.warn(
+                      `[WebSocket] Duplicate message detected user_id=${msgUserId} client_message_id=${clientMessageId} existing_id=${existing.id}`,
+                    )
+                    // Echo only back to the sender so they can reconcile the optimistic entry
+                    ws.send(
+                      JSON.stringify({
+                        type: "message",
+                        payload: {
+                          id: existing.id,
+                          clientMessageId,
+                          roomId: msgRoomId,
+                          userId: msgUserId,
+                          displayName: connection.user?.displayName,
+                          avatarUrl: connection.user?.avatarUrl,
+                          content: existing.content,
+                          createdAt: new Date(existing.created_at as string).getTime(),
+                          duplicate: true,
+                        },
+                        timestamp: Date.now(),
+                      }),
+                    )
+                    return
+                  }
+                }
+
+                // 2. Insert the new message
+                const insertData: Record<string, unknown> = {
+                  user_id: msgUserId,
+                  room_id: msgRoomId,
+                  content: msgContent ?? "",
+                  is_encrypted: false,
+                  status: "sent",
+                  ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
+                }
+
+                const { data: inserted, error: insertErr } = await supabase
+                  .from("messages")
+                  .insert(insertData)
+                  .select()
+                  .single()
+
+                if (insertErr) {
+                  // Concurrent duplicate hit the unique constraint
+                  if (insertErr.code === "23505" && clientMessageId) {
+                    const { data: concurrent } = await supabase
+                      .from("messages")
+                      .select("*")
+                      .eq("user_id", msgUserId)
+                      .eq("client_message_id", clientMessageId)
+                      .maybeSingle()
+
+                    if (concurrent) {
+                      console.warn(
+                        `[WebSocket] Race-condition duplicate user_id=${msgUserId} client_message_id=${clientMessageId} existing_id=${concurrent.id}`,
+                      )
+                      ws.send(
+                        JSON.stringify({
+                          type: "message",
+                          payload: {
+                            id: concurrent.id,
+                            clientMessageId,
+                            roomId: msgRoomId,
+                            userId: msgUserId,
+                            displayName: connection.user?.displayName,
+                            avatarUrl: connection.user?.avatarUrl,
+                            content: concurrent.content,
+                            createdAt: new Date(concurrent.created_at as string).getTime(),
+                            duplicate: true,
+                          },
+                          timestamp: Date.now(),
+                        }),
+                      )
+                      return
+                    }
+                  }
+                  throw insertErr
+                }
+
+                // 3. Broadcast the persisted message to everyone in the room
+                const broadcastMessage = {
+                  type: "message",
+                  payload: {
+                    id: inserted.id,
+                    clientMessageId,
+                    roomId: msgRoomId,
+                    userId: msgUserId,
+                    displayName: connection.user?.displayName,
+                    avatarUrl: connection.user?.avatarUrl,
+                    content: inserted.content,
+                    createdAt: new Date(inserted.created_at as string).getTime(),
+                  },
+                  timestamp: Date.now(),
+                }
+
+                broadcastToRoom(msgRoomId, broadcastMessage)
+              } catch (err) {
+                console.error("[WebSocket] send_message persistence error:", err)
+                ws.send(
+                  JSON.stringify({
+                    type: "error",
+                    payload: { message: "Failed to persist message" },
+                    timestamp: Date.now(),
+                  }),
+                )
+              }
+            })()
             break
           }
 

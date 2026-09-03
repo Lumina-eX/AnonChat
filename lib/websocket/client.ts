@@ -150,6 +150,7 @@ export class WebSocketClient {
   sendMessage(
     roomId: string,
     content: string,
+    clientMessageId?: string,
   ): { success: boolean; error?: string } {
     if (!this.walletAddress) {
       handleAppError("Wallet not connected", "WALLET_CONNECT");
@@ -171,7 +172,7 @@ export class WebSocketClient {
 
     this.send({
       type: "send_message",
-      payload: { roomId, content },
+      payload: { roomId, content, clientMessageId },
       timestamp: Date.now(),
     });
     return { success: true };
