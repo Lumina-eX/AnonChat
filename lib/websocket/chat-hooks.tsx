@@ -192,9 +192,13 @@ export function useRealtimeChat(roomId: string, userId?: string) {
     (content: string) => {
       if (!content.trim() || !roomId || removedFromRoom) return
 
+      // Generate a stable, client-side UUID for idempotent delivery.
+      // The same UUID must be resent on retry so the server can detect duplicates.
+      const clientMessageId = crypto.randomUUID()
+
       // Optimistically add message
       const optimisticMessage: RealtimeMessageUpdate = {
-        id: `temp-${Date.now()}`,
+        id: `temp-${clientMessageId}`,
         roomId,
         userId: userId || "unknown",
         displayName: "You",
@@ -205,8 +209,8 @@ export function useRealtimeChat(roomId: string, userId?: string) {
 
       setMessages((prev) => [...prev, optimisticMessage])
 
-      // Send via WebSocket with rate limit check
-      const result = sendMessage(roomId, content)
+      // Send via WebSocket with idempotency key
+      const result = sendMessage(roomId, content, clientMessageId)
       if (!result.success) {
         // Remove optimistic message on failure
         setMessages((prev) => prev.filter((m) => m.id !== optimisticMessage.id))

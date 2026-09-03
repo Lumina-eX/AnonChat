@@ -7,6 +7,7 @@ import {
   resolveWalletMessageRatePolicy,
 } from "@/lib/wallet-message-rate-limit"
 import { getRoomTTL } from "@/lib/ephemeral-cleanup"
+import { logger } from "@/lib/logger"
 import { type NextRequest, NextResponse } from "next/server"
 import { validateMessage, ValidationErrorType } from "@/lib/middleware/message-validation"
 
@@ -293,12 +294,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Prepare message data
-    const messageData: any = {
+    const messageData: Record<string, unknown> = {
       user_id: user.id,
       room_id,
       content: sanitizedContent,
       is_encrypted: false,
       status: "sent",
+      ...(client_message_id ? { client_message_id } : {}),
     }
 
     if (reply_to_id) {
@@ -317,7 +319,31 @@ export async function POST(request: NextRequest) {
       .insert(messageData)
       .select()
 
-    if (error) throw error
+    if (error) {
+      // Unique constraint violation (concurrent duplicate) — treat as idempotent hit
+      if (error.code === "23505") {
+        const { data: concurrent } = await supabase
+          .from("messages")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("client_message_id", client_message_id)
+          .maybeSingle()
+
+        if (concurrent) {
+          logger.warn("idempotent_duplicate_http_race", {
+            user_id: user.id,
+            room_id,
+            client_message_id,
+            existing_message_id: concurrent.id,
+          })
+          return NextResponse.json(
+            { message: concurrent, success: true, duplicate: true },
+            { status: 200 },
+          )
+        }
+      }
+      throw error
+    }
 
     return NextResponse.json({ message: data[0], success: true }, { status: 201 })
   } catch (error) {

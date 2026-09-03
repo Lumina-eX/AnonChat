@@ -150,8 +150,8 @@ export function useWebSocketSend() {
     leaveRoom: useCallback((roomId: string) => {
       client.current.leaveRoom(roomId);
     }, []),
-    sendMessage: useCallback((roomId: string, content: string) => {
-      return client.current.sendMessage(roomId, content);
+    sendMessage: useCallback((roomId: string, content: string, clientMessageId?: string) => {
+      return client.current.sendMessage(roomId, content, clientMessageId);
     }, []),
     notifyTyping: useCallback((roomId: string) => {
       client.current.notifyTyping(roomId);

@@ -388,6 +388,8 @@ export function createWebSocketServer(port: number = 3001) {
           case "send_message": {
             const msgRoomId = message.payload.roomId
             const msgUserId = connection.userId
+            const msgContent = message.payload.content as string | undefined
+            const clientMessageId = message.payload.clientMessageId as string | undefined
 
             if (!msgUserId) {
               ws.send(
