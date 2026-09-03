@@ -1,12 +1,14 @@
 "use client";
 
 import React, {
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChatWelcomeState } from "@/components/chat-welcome-state";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
@@ -26,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { highlightText } from "@/lib/highlight-text";
 import { handleAppError } from "@/lib/error-handler"; // Integrated Error Handler
 import {
+  AlertTriangle,
   ArrowLeft,
   MessageSquare,
   Loader2,
@@ -57,7 +60,10 @@ type ChatPreview = {
   status: PresenceStatus;
 };
 
-
+/** Reason a URL-specified group could not be opened. */
+type DeepLinkError =
+  | "not_found"     // Group does not exist or was deleted
+  | "unauthorized"; // Group exists but user is not a member
 
 interface DBRoom {
   id: string;
@@ -85,7 +91,19 @@ interface DBMessage {
   };
 }
 
-export default function ChatPage() {
+/**
+ * Inner page component — must be wrapped in <Suspense> because it calls
+ * useSearchParams(), which requires a Suspense boundary in Next.js App Router.
+ */
+function ChatPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Track deep-link resolution so we apply the URL param exactly once after
+  // rooms have finished loading.
+  const deepLinkApplied = useRef(false);
+  const [deepLinkError, setDeepLinkError] = useState<DeepLinkError | null>(null);
+
   const [query, setQuery] = useState("");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState("");
@@ -333,16 +351,70 @@ export default function ChatPage() {
       );
 
       setChats(previews);
-      setSelectedChatId(
-        (currentSelected) => currentSelected || previews[0]?.id || null,
-      );
+
+      // --- Deep-link resolution (runs only once) ---
+      // Read the ?group= param from the URL at the time rooms finish loading.
+      // We do this inside the callback so we always see the freshly-loaded room
+      // list rather than a stale closure value.
+      if (!deepLinkApplied.current) {
+        deepLinkApplied.current = true;
+
+        const urlGroupId = searchParams.get("group");
+
+        if (urlGroupId) {
+          const matchedRoom = previews.find((r) => r.id === urlGroupId);
+
+          if (matchedRoom) {
+            // Valid group the user has access to — select it.
+            setSelectedChatId(urlGroupId);
+            setDeepLinkError(null);
+          } else if (previews.length === 0) {
+            // User has no rooms at all — we can't tell whether this group
+            // ever existed, treat as not-found.
+            setDeepLinkError("not_found");
+            setSelectedChatId(null);
+            // Remove the stale param from the URL.
+            const params = new URLSearchParams(searchParams.toString());
+            params.delete("group");
+            const qs = params.toString();
+            router.replace(qs ? `/chat?${qs}` : "/chat", { scroll: false });
+          } else {
+            // Rooms loaded but the requested group is not in the list — the
+            // user either lacks access or the group was deleted.  Show the
+            // unauthorised banner; the API doesn't disambiguate these two
+            // cases from the client, so we show "unauthorized" as the default
+            // (the most common real-world scenario — sharing a private group).
+            setDeepLinkError("unauthorized");
+            setSelectedChatId(previews[0]?.id || null);
+            // Remove the inaccessible group from the URL, fall back to first.
+            const params = new URLSearchParams(searchParams.toString());
+            if (previews[0]) {
+              params.set("group", previews[0].id);
+            } else {
+              params.delete("group");
+            }
+            const qs = params.toString();
+            router.replace(qs ? `/chat?${qs}` : "/chat", { scroll: false });
+          }
+        } else {
+          // No group param — default to first room as before.
+          setSelectedChatId(
+            (currentSelected) => currentSelected || previews[0]?.id || null,
+          );
+        }
+      } else {
+        // Subsequent re-fetches (e.g. new room created) preserve current selection.
+        setSelectedChatId(
+          (currentSelected) => currentSelected || previews[0]?.id || null,
+        );
+      }
     } catch {
       setChats([]);
       setSelectedChatId(null);
     } finally {
       setIsLoadingRooms(false);
     }
-  }, [fetchRoomLastMessagePreview]);
+  }, [fetchRoomLastMessagePreview, searchParams, router]);
 
   const fetchMessagesForRoom = useCallback(
     async (roomId: string, offset = 0, append = false) => {
@@ -460,6 +532,30 @@ export default function ChatPage() {
     fetchRooms();
   }, [fetchCurrentUser, fetchRooms]);
 
+  // Sync selected group with browser back / forward navigation.
+  // When the user presses Back or Forward, the URL's ?group= param changes and
+  // searchParams updates (Next.js router), so we read from it reactively.
+  useEffect(() => {
+    const urlGroupId = searchParams.get("group");
+
+    // Skip during the initial room load — fetchRooms handles that case.
+    if (!deepLinkApplied.current) return;
+
+    setSelectedChatId((prev) => {
+      if (!urlGroupId) {
+        // URL no longer has a group param — deselect.
+        return null;
+      }
+      if (urlGroupId === prev) {
+        // Already selected — no change needed.
+        return prev;
+      }
+      // Switch to the group referenced by the URL.
+      setDeepLinkError(null);
+      return urlGroupId;
+    });
+  }, [searchParams]);
+
   useEffect(() => {
     if (!selectedChatId) return;
 
@@ -493,10 +589,17 @@ export default function ChatPage() {
 
   const handleSelectChat = useCallback((chatId: string) => {
     setSelectedChatId(chatId);
+    setDeepLinkError(null);
     setReplyingToMessage(null);
     setMobileSidebarOpen(false);
     setActiveMobileTab("conversation");
-  }, []);
+
+    // Reflect the selected group in the URL without a full page reload so
+    // users can share/bookmark the link and browser back/forward works.
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("group", chatId);
+    router.push(`/chat?${params.toString()}`, { scroll: false });
+  }, [router, searchParams]);
 
   const handleReplyToMessage = useCallback((message: ChatMessage) => {
     setReplyingToMessage(message);
@@ -696,6 +799,29 @@ export default function ChatPage() {
       <StellarNetworkStatus variant="banner" />
       <WalletNetworkWarning variant="banner" />
 
+      {/* Deep-link error banner — shown when URL contains an inaccessible group */}
+      {deepLinkError && (
+        <div
+          role="alert"
+          className="flex items-center gap-3 px-4 py-2.5 bg-destructive/10 border-b border-destructive/20 text-sm text-destructive"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="flex-1">
+            {deepLinkError === "unauthorized"
+              ? "You don't have access to the requested group. Showing your first available group instead."
+              : "The requested group no longer exists or could not be found."}
+          </span>
+          <button
+            type="button"
+            onClick={() => setDeepLinkError(null)}
+            className="shrink-0 p-1 rounded hover:bg-destructive/20 transition-colors"
+            aria-label="Dismiss"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       <main className="flex-1 pt-24 pb-24 md:pb-8 px-3 sm:px-6">
         <div className="mx-auto w-full max-w-7xl h-[min(84vh,820px)] rounded-3xl border border-border/70 bg-card/90 shadow-[0_24px_64px_-24px_rgba(0,0,0,0.35)] backdrop-blur-sm overflow-hidden">
           <div className="h-full flex relative">
@@ -848,7 +974,16 @@ export default function ChatPage() {
                         <button
                           type="button"
                           className="hidden md:inline-flex items-center justify-center h-9 w-9 rounded-lg border border-border/80"
-                          onClick={() => setSelectedChatId(null)}
+                          onClick={() => {
+                            setSelectedChatId(null);
+                            // Remove the group param from the URL so the
+                            // address bar reflects the deselected state and
+                            // the back-button can restore it.
+                            const params = new URLSearchParams(searchParams.toString());
+                            params.delete("group");
+                            const qs = params.toString();
+                            router.push(qs ? `/chat?${qs}` : "/chat", { scroll: false });
+                          }}
                         >
                           <ArrowLeft className="h-4 w-4" />
                         </button>
@@ -1185,5 +1320,23 @@ export default function ChatPage() {
       </main>
       <Footer />
     </div>
+  );
+}
+
+/**
+ * Wraps ChatPageInner in a Suspense boundary, which is required by Next.js
+ * whenever a client component calls useSearchParams().
+ */
+export default function ChatPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center text-muted-foreground">
+          <Loader2 className="h-6 w-6 animate-spin" />
+        </div>
+      }
+    >
+      <ChatPageInner />
+    </Suspense>
   );
 }
