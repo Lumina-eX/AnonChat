@@ -346,7 +346,9 @@ export async function POST(
         timestamp: new Date().toISOString(),
       }
       const metadataHash = computeHash(transferMetadata as any)
-      const result = await submitMetadataHash(groupId, metadataHash)
+      const result = await submitMetadataHash(groupId, metadataHash, undefined, {
+        supabase: supabase as any,
+      })
 
       if (result.success && result.transactionHash) {
         stellarTxHash = result.transactionHash

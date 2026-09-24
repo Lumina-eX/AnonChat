@@ -8,6 +8,7 @@ import {
 import { loadStellarConfig, isConfigured, getExplorerUrl } from "./stellar-config";
 import { logBlockchainOperation, generateCorrelationId } from "./logger";
 import { deriveMemoGroupId, validateMemoGroupId, STELLAR_MEMO_MAX_BYTES } from "./memo";
+import { upsertTransactionReceipt } from "./transaction-receipts";
 
 // Retry configuration
 const DEFAULT_MAX_ATTEMPTS = 3;
@@ -414,6 +415,7 @@ export async function submitMetadataHash(
     attemptId,
   }, correlationId);
 
+  let transactionHash: string | undefined;
   try {
     // Initialize Stellar SDK
     const server = new StellarSdk.Horizon.Server(config.horizonUrl);
@@ -485,6 +487,7 @@ export async function submitMetadataHash(
 
     // Sign transaction
     transaction.sign(sourceKeypair);
+    transactionHash = transaction.hash().toString("hex");
 
     // Submit with retry logic
     const maxAttempts = options?.maxAttempts || DEFAULT_MAX_ATTEMPTS;
@@ -521,6 +524,24 @@ export async function submitMetadataHash(
         confirmedAt: new Date().toISOString(),
         incrementAttempt: true,
       });
+      try {
+        await upsertTransactionReceipt({
+          supabase: options.supabase,
+          transactionHash: result.hash,
+          operationId: attemptId,
+          status: "confirmed",
+          ledgerSequence: result.ledger,
+          blockTimestamp: (result as any).created_at ?? null,
+          confirmedAt: new Date().toISOString(),
+          metadata: { group_id: groupId, submission_type: "metadata_hash", memo: memoGroupId },
+        });
+      } catch (receiptError) {
+        logBlockchainOperation("warn", "Failed to persist transaction receipt", {
+          transactionHash: result.hash,
+          operationId: attemptId,
+          error: receiptError instanceof Error ? receiptError.message : "Unknown error",
+        }, correlationId);
+      }
     }
 
     return {
@@ -564,6 +585,25 @@ export async function submitMetadataHash(
         incrementAttempt: true,
         nextRetryAt,
       });
+    }
+
+    if (transactionHash && attemptId && options?.supabase) {
+      try {
+        await upsertTransactionReceipt({
+          supabase: options.supabase,
+          transactionHash,
+          operationId: attemptId,
+          status: "failed",
+          errorMessage,
+          metadata: { group_id: groupId, submission_type: "metadata_hash", memo: memoGroupId },
+        });
+      } catch (receiptError) {
+        logBlockchainOperation("warn", "Failed to persist failed transaction receipt", {
+          transactionHash,
+          operationId: attemptId,
+          error: receiptError instanceof Error ? receiptError.message : "Unknown error",
+        }, correlationId);
+      }
     }
 
     // Provide user-friendly error messages
@@ -672,6 +712,7 @@ export async function submitAuditEvent(
     }
   }
 
+  let transactionHash: string | undefined;
   try {
     const server = new StellarSdk.Horizon.Server(config.horizonUrl);
     const sourceKeypair = StellarSdk.Keypair.fromSecret(config.sourceSecret);
@@ -703,6 +744,7 @@ export async function submitAuditEvent(
       .build();
 
     transaction.sign(sourceKeypair);
+    transactionHash = transaction.hash().toString("hex");
 
     // Submit with retry logic
     const maxAttempts = options?.maxAttempts || DEFAULT_MAX_ATTEMPTS;
@@ -741,6 +783,24 @@ export async function submitAuditEvent(
         confirmedAt: new Date().toISOString(),
         incrementAttempt: true,
       });
+      try {
+        await upsertTransactionReceipt({
+          supabase: options.supabase,
+          transactionHash: result.hash,
+          operationId: eventId,
+          status: "confirmed",
+          ledgerSequence: result.ledger,
+          blockTimestamp: (result as any).created_at ?? null,
+          confirmedAt: new Date().toISOString(),
+          metadata: { group_id: groupId, submission_type: "audit_event", memo: auditMemo },
+        });
+      } catch (receiptError) {
+        logBlockchainOperation("warn", "Failed to persist transaction receipt", {
+          transactionHash: result.hash,
+          operationId: eventId,
+          error: receiptError instanceof Error ? receiptError.message : "Unknown error",
+        }, correlationId);
+      }
     }
 
     return {
@@ -787,6 +847,25 @@ export async function submitAuditEvent(
         incrementAttempt: true,
         nextRetryAt,
       });
+    }
+
+    if (transactionHash && eventId && options?.supabase) {
+      try {
+        await upsertTransactionReceipt({
+          supabase: options.supabase,
+          transactionHash,
+          operationId: eventId,
+          status: "failed",
+          errorMessage,
+          metadata: { group_id: groupId, submission_type: "audit_event", memo: auditMemo },
+        });
+      } catch (receiptError) {
+        logBlockchainOperation("warn", "Failed to persist failed transaction receipt", {
+          transactionHash,
+          operationId: eventId,
+          error: receiptError instanceof Error ? receiptError.message : "Unknown error",
+        }, correlationId);
+      }
     }
 
     // User-friendly error messages
