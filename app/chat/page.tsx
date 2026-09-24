@@ -21,6 +21,7 @@ import {
 import { RoomMembersDialog } from "@/components/room-members-dialog";
 import ConnectWallet from "@/components/wallet-connector";
 import { RoomActivityPanel } from "@/components/room-activity-panel";
+import MemberPanel from "@/components/MemberPanel";
 import { MessageSearchBar } from "@/components/message-search-bar";
 import { GroupVerificationBadge } from "@/components/GroupVerificationBadge";
 import { ChatMessageBubble, type ChatMessage } from "@/components/chat-message-bubble";
@@ -110,6 +111,7 @@ function ChatPageInner() {
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const [roomMembersOpen, setRoomMembersOpen] = useState(false);
+  const [memberPanelMobileOpen, setMemberPanelMobileOpen] = useState(false);
   const [auditTrailOpen, setAuditTrailOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [activeMobileTab, setActiveMobileTab] = useState<
@@ -1034,11 +1036,18 @@ function ChatPageInner() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setRoomMembersOpen(true)}
+                          onClick={() => setMemberPanelMobileOpen(true)}
                           className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40"
                         >
                           <Users className="h-3.5 w-3.5" />
                           Members
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRoomMembersOpen(true)}
+                          className="hidden lg:inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                        >
+                          Manage
                         </button>
                       </div>
                     </div>
@@ -1280,6 +1289,14 @@ function ChatPageInner() {
                 </>
               )}
             </section>
+            {selectedChat && (
+              <MemberPanel
+                roomId={selectedChat.id}
+                mobileOpen={memberPanelMobileOpen}
+                onMobileOpenChange={setMemberPanelMobileOpen}
+                className="h-full"
+              />
+            )}
           </div>
         </div>
 
