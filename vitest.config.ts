@@ -20,6 +20,7 @@ export default defineConfig({
       "tests/group-members-pagination.test.ts",
       "tests/stellar-transaction-history.test.ts",
       "tests/group-message-statistics.test.ts",
+      "tests/stellar-transaction-state-machine.test.ts",
     ],
     globals: false,
   },
