@@ -78,11 +78,11 @@ export function encodeCursor(sortValue: string, userId: string): string {
 export function decodeCursor(cursor: string): { sortValue: string; userId: string } | null {
   try {
     const raw = Buffer.from(cursor, "base64url").toString("utf8");
-    const parts = raw.split(":::");
-    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    const separator = raw.lastIndexOf(":::");
+    if (separator < 0 || separator + 3 === raw.length) {
       return null;
     }
-    return { sortValue: parts[0], userId: parts[1] };
+    return { sortValue: raw.slice(0, separator), userId: raw.slice(separator + 3) };
   } catch {
     return null;
   }
@@ -252,29 +252,17 @@ export function sortAndPaginateMembers(
   const paginatedMembers = sorted.slice(startIndex, startIndex + limit);
   const hasMore = startIndex + limit < sorted.length;
 
-  const nextCursor =
-    paginatedMembers.length > 0 && hasMore
-      ? encodeCursor(
-          sortBy === "role"
-            ? paginatedMembers[paginatedMembers.length - 1].role
-            : sortBy === "username"
-              ? paginatedMembers[paginatedMembers.length - 1].display_name || ""
-              : paginatedMembers[paginatedMembers.length - 1].joined_at,
-          paginatedMembers[paginatedMembers.length - 1].user_id,
-        )
-      : null;
-
-  const prevCursor =
-    startIndex > 0 && paginatedMembers.length > 0
-      ? encodeCursor(
-          sortBy === "role"
-            ? paginatedMembers[0].role
-            : sortBy === "username"
-              ? paginatedMembers[0].display_name || ""
-              : paginatedMembers[0].joined_at,
-          paginatedMembers[0].user_id,
-        )
-      : null;
+  const cursorFor = (index: number) =>
+    encodeCursor(buildSortValue(sorted[index], sortBy), sorted[index].user_id);
+  const nextCursor = paginatedMembers.length > 0 && hasMore
+    ? cursorFor(startIndex + paginatedMembers.length - 1)
+    : null;
+  // A cursor identifies the row before the requested page. The empty user ID
+  // sentinel decodes as invalid and intentionally returns the first page.
+  const previousStart = Math.max(0, startIndex - limit);
+  const prevCursor = startIndex > 0 && paginatedMembers.length > 0
+    ? previousStart === 0 ? encodeCursor("start", "") : cursorFor(previousStart - 1)
+    : null;
 
   const effectivePage = Math.floor(startIndex / limit) + 1;
 
@@ -295,7 +283,7 @@ export async function paginateGroupMembers(
   params: GroupMembersPaginationParams,
 ): Promise<PaginatedGroupMembersResponse> {
   const { roomId, currentUserId } = params;
-  const limit = Math.min(Math.max(params.limit || DEFAULT_LIMIT, 1), MAX_LIMIT);
+  const limit = Math.min(Math.max(Number.isFinite(params.limit) ? Math.floor(params.limit!) : DEFAULT_LIMIT, 1), MAX_LIMIT);
   const sortBy = normalizeSortField(params.sortBy);
   const sortOrder: SortOrder = params.sortOrder === "desc" ? "desc" : "asc";
 
@@ -307,100 +295,55 @@ export async function paginateGroupMembers(
   }
 
   // 1. Fetch room to determine creator/owner
-  const { data: room } = await supabase
+  const { data: room, error: roomError } = await supabase
     .from("rooms")
     .select("created_by")
     .eq("id", roomId)
     .maybeSingle();
 
+  if (roomError) throw new Error(`Failed to fetch room: ${roomError.message}`);
   const creatorUserId = room?.created_by || null;
 
-  // 2. Count active memberships and fetch only the requested page slice
-  const { count: totalCount, error: countError } = await supabase
-    .from("room_members")
-    .select("user_id", { count: "exact", head: true })
-    .eq("room_id", roomId)
-    .is("removed_at", null);
-
-  if (countError) {
-    throw new Error(`Failed to count room members: ${countError.message}`);
-  }
-
-  const safeTotalCount = totalCount || 0;
-
-  if (safeTotalCount === 0) {
-    return {
-      members: [],
-      totalCount: 0,
-      pageSize: limit,
-      page: 1,
-      totalPages: 0,
-      hasMore: false,
-      nextCursor: null,
-      prevCursor: null,
-    };
-  }
-
-  // 3. Fetch only the requested page slice from room_members
-  let membersQuery = supabase
-    .from("room_members")
-    .select("user_id, joined_at")
-    .eq("room_id", roomId)
-    .is("removed_at", null);
-
-  if (params.cursor) {
-    const decoded = decodeCursor(params.cursor);
-    if (decoded) {
-      membersQuery = membersQuery.or(
-        `joined_at.gt.${decoded.sortValue},and(joined_at.eq.${decoded.sortValue},user_id.gt.${decoded.userId})`,
-      );
-    }
-  } else if (offset > 0) {
-    membersQuery = membersQuery.range(offset, offset + limit - 1);
-  } else {
-    membersQuery = membersQuery.limit(limit);
-  }
-
-  membersQuery = membersQuery.order("joined_at", { ascending: sortOrder === "asc" });
-  membersQuery = membersQuery.order("user_id", { ascending: true });
-
-  const { data: pageRows, error: pageError } = await membersQuery;
-  if (pageError) {
-    throw new Error(`Failed to fetch paginated members: ${pageError.message}`);
-  }
-
-  const memberRows = pageRows || [];
-  const pagedUserIds = memberRows.map((m) => m.user_id);
-
-  // 4. Batch fetch profiles for just the page slice
-  const { data: rawProfiles } = pagedUserIds.length
-    ? await supabase
-        .from("profiles")
-        .select("id, display_name, username, wallet_address, avatar_url")
-        .in("id", pagedUserIds)
-    : { data: [] as any[] };
-
-  const profileById = new Map((rawProfiles || []).map((p) => [p.id, p]));
-
-  // 5. Batch fetch roles from group_membership for the page slice
-  const walletAddresses = (rawProfiles || [])
-    .map((p) => p.wallet_address)
-    .filter(Boolean) as string[];
-
+  // Fetch deterministic batches so the server row cap cannot truncate the group.
+  // Names and roles live in separate tables: hydrate before sorting and slicing.
+  const memberRows: { user_id: string; joined_at: string }[] = [];
+  const profileById = new Map<string, {
+    display_name: string | null; username: string | null;
+    wallet_address: string | null; avatar_url: string | null;
+  }>();
   const roleByWallet = new Map<string, MemberRole>();
-  if (walletAddresses.length > 0) {
-    const { data: memberships } = await supabase
-      .from("group_membership")
-      .select("wallet_address, role")
-      .eq("group_id", roomId)
-      .in("wallet_address", walletAddresses);
-
-    for (const gm of memberships || []) {
-      if (gm.wallet_address && gm.role) {
-        roleByWallet.set(gm.wallet_address, gm.role as MemberRole);
-      }
+  const batchSize = 100;
+  for (let start = 0; ; ) {
+    const { data, error } = await supabase
+      .from("room_members")
+      .select("user_id, joined_at")
+      .eq("room_id", roomId)
+      .is("removed_at", null)
+      .order("user_id", { ascending: true })
+      .range(start, start + batchSize - 1);
+    if (error) throw new Error(`Failed to fetch room members: ${error.message}`);
+    const batch = data || [];
+    if (batch.length === 0) break;
+    memberRows.push(...batch);
+    start += batch.length;
+    const { data: profiles, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, display_name, username, wallet_address, avatar_url")
+      .in("id", batch.map((member) => member.user_id));
+    if (profileError) throw new Error(`Failed to fetch member profiles: ${profileError.message}`);
+    for (const profile of profiles || []) profileById.set(profile.id, profile);
+    const wallets = (profiles || []).map((profile) => profile.wallet_address).filter(Boolean);
+    if (wallets.length) {
+      const { data: roles, error: roleError } = await supabase
+        .from("group_membership")
+        .select("wallet_address, role")
+        .eq("group_id", roomId)
+        .in("wallet_address", wallets);
+      if (roleError) throw new Error(`Failed to fetch member roles: ${roleError.message}`);
+      for (const member of roles || []) roleByWallet.set(member.wallet_address, member.role as MemberRole);
     }
   }
+  const safeTotalCount = memberRows.length;
 
   // 6. Assemble fully hydrated member records
   const enrichedMembers: GroupMemberItem[] = memberRows.map((m) => {
@@ -422,34 +365,17 @@ export async function paginateGroupMembers(
     };
   });
 
-  const hasMore = memberRows.length === limit;
-  const nextCursor =
-    enrichedMembers.length > 0 && hasMore
-      ? encodeCursor(
-          buildSortValue(enrichedMembers[enrichedMembers.length - 1], sortBy),
-          enrichedMembers[enrichedMembers.length - 1].user_id,
-        )
-      : null;
-  const prevCursor =
-    params.cursor && enrichedMembers.length > 0
-      ? encodeCursor(
-          buildSortValue(enrichedMembers[0], sortBy),
-          enrichedMembers[0].user_id,
-        )
-      : null;
-  const effectivePage = params.cursor
-    ? Math.floor((offset || 0) / limit) + 1
-    : Math.floor((offset || 0) / limit) + 1;
-  const totalPages = Math.ceil(safeTotalCount / limit);
-
+  const result = sortAndPaginateMembers(enrichedMembers, {
+    limit, offset, cursor: params.cursor, sortBy, sortOrder,
+  });
   return {
-    members: enrichedMembers.sort((a, b) => compareMembers(a, b, sortBy, sortOrder)),
+    members: result.paginatedMembers,
     totalCount: safeTotalCount,
     pageSize: limit,
-    page: effectivePage,
-    totalPages,
-    hasMore,
-    nextCursor,
-    prevCursor,
+    page: result.effectivePage,
+    totalPages: Math.ceil(safeTotalCount / limit),
+    hasMore: result.hasMore,
+    nextCursor: result.nextCursor,
+    prevCursor: result.prevCursor,
   };
 }

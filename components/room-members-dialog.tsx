@@ -132,23 +132,10 @@ export function RoomMembersDialog({
   }
 
   const mergedMembers = useMemo(() => {
-    const statusRank: Record<MemberPresence, number> = {
-      online: 0,
-      away: 1,
-      offline: 2,
-    }
-
-    return [...members]
-      .map((member) => ({
-        ...member,
-        presence: presenceByUserId[member.user_id] ?? "offline",
-      }))
-      .sort((left, right) => {
-        const statusDiff =
-          statusRank[left.presence] - statusRank[right.presence]
-        if (statusDiff !== 0) return statusDiff
-        return left.joined_at.localeCompare(right.joined_at)
-      })
+    return members.map((member) => ({
+      ...member,
+      presence: presenceByUserId[member.user_id] ?? "offline",
+    }))
   }, [members, presenceByUserId])
 
   useEffect(() => {
