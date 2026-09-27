@@ -29,8 +29,15 @@ import { cn } from "@/lib/utils";
 import { highlightText } from "@/lib/highlight-text";
 import { handleAppError } from "@/lib/error-handler"; // Integrated Error Handler
 import {
+  clearDraft,
+  getDraft,
+  setDraft,
+  subscribeDraft,
+} from "@/lib/drafts/draft-store";
+import {
   AlertTriangle,
   ArrowLeft,
+  Check,
   MessageSquare,
   Loader2,
   Menu,
@@ -92,6 +99,9 @@ interface DBMessage {
   };
 }
 
+/** Debounce before a composer edit is written to the draft store. */
+const DRAFT_SAVE_DEBOUNCE_MS = 400;
+
 /**
  * Inner page component — must be wrapped in <Suspense> because it calls
  * useSearchParams(), which requires a Suspense boundary in Next.js App Router.
@@ -108,6 +118,8 @@ function ChatPageInner() {
   const [query, setQuery] = useState("");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState("");
+  const [isDraftSaved, setIsDraftSaved] = useState(false);
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const [roomMembersOpen, setRoomMembersOpen] = useState(false);
@@ -170,6 +182,56 @@ function ChatPageInner() {
       // Ignore localStorage read errors
     }
   }, [selectedChatId]);
+
+  // Restore the saved draft whenever the active group changes. Drafts live in
+  // localStorage only, so nothing is ever sent to the backend.
+  useEffect(() => {
+    const restored = selectedChatId ? getDraft(selectedChatId) : "";
+    setInputMessage(restored);
+    setIsDraftSaved(restored.length > 0);
+  }, [selectedChatId]);
+
+  // Keep the "Draft saved" indicator truthful if the draft changes elsewhere.
+  useEffect(() => {
+    if (!selectedChatId) return;
+    return subscribeDraft(selectedChatId, (draft) => {
+      setIsDraftSaved(draft.length > 0);
+    });
+  }, [selectedChatId]);
+
+  const cancelPendingDraftSave = useCallback(() => {
+    if (draftSaveTimerRef.current !== null) {
+      clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+  }, []);
+
+  // Drop any pending debounce when the page unmounts.
+  useEffect(() => {
+    return () => cancelPendingDraftSave();
+  }, [cancelPendingDraftSave]);
+
+  const handleComposerChange = useCallback(
+    (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const value = event.target.value;
+      setInputMessage(value);
+
+      if (!selectedChatId) return;
+
+      // Persist after a short pause so we do not write on every keystroke.
+      cancelPendingDraftSave();
+      draftSaveTimerRef.current = setTimeout(() => {
+        draftSaveTimerRef.current = null;
+        if (value.trim()) {
+          setIsDraftSaved(setDraft(selectedChatId, value));
+        } else {
+          clearDraft(selectedChatId);
+          setIsDraftSaved(false);
+        }
+      }, DRAFT_SAVE_DEBOUNCE_MS);
+    },
+    [cancelPendingDraftSave, selectedChatId],
+  );
 
   const togglePinMessage = useCallback((chatId: string, msgId: string) => {
     setPinnedIdsByChat((prev) => {
@@ -650,8 +712,10 @@ function ChatPageInner() {
       ...prev,
       [selectedChatId]: [...(prev[selectedChatId] || []), optimisticMessage],
     }));
+    cancelPendingDraftSave();
     setInputMessage("");
     setReplyingToMessage(null);
+    setIsDraftSaved(false);
     setIsSending(true);
 
     try {
@@ -670,6 +734,10 @@ function ChatPageInner() {
       if (!response.ok || data.error) {
         throw new Error(data.error || "Failed to send message");
       }
+
+      // The message reached the backend, so the draft is no longer needed.
+      clearDraft(selectedChatId);
+      setIsDraftSaved(false);
 
       const savedMessage: ChatMessage = data.message
         ? {
@@ -700,6 +768,10 @@ function ChatPageInner() {
     } catch (error: any) {
       handleAppError(error, "SEND_MESSAGE");
 
+      // Sending failed: restore the text and its draft so nothing is lost.
+      setInputMessage(trimmedMessage);
+      setIsDraftSaved(setDraft(selectedChatId, trimmedMessage));
+
       setMessagesByChat((prev) => ({
         ...prev,
         [selectedChatId]: (prev[selectedChatId] || []).filter(
@@ -709,7 +781,7 @@ function ChatPageInner() {
     } finally {
       setIsSending(false);
     }
-  }, [inputMessage, selectedChatId, replyingToMessage, transformToChatMessage, chats]);
+  }, [inputMessage, selectedChatId, replyingToMessage, transformToChatMessage, chats, cancelPendingDraftSave]);
 
   const handleComposerKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1234,6 +1306,16 @@ function ChatPageInner() {
                       </div>
                     )}
 
+                    {isDraftSaved && (
+                      <div
+                        className="px-4 pt-2 flex items-center justify-end gap-1 text-[11px] text-muted-foreground animate-in fade-in"
+                        aria-live="polite"
+                      >
+                        <Check className="h-3 w-3 text-emerald-500" />
+                        Draft saved
+                      </div>
+                    )}
+
                     <div className="p-3 sm:p-4 flex items-end gap-2 sm:gap-3">
                       <button
                         type="button"
@@ -1251,9 +1333,7 @@ function ChatPageInner() {
                       <textarea
                         ref={composerInputRef}
                         value={inputMessage}
-                        onChange={(event) =>
-                          setInputMessage(event.target.value)
-                        }
+                        onChange={handleComposerChange}
                         onKeyDown={handleComposerKeyDown}
                         rows={1}
                         placeholder="Type a message (Ctrl+Enter to send)"
