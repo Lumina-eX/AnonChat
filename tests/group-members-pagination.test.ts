@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  paginateGroupMembers,
   encodeCursor,
   decodeCursor,
   normalizeSortField,
@@ -184,5 +185,84 @@ describe("Group Members Pagination Service", () => {
       expect(result.nextCursor).toBeNull();
       expect(result.prevCursor).toBeNull();
     });
+  });
+});
+
+// Exercise the service with a query mock that applies database ranges BEFORE
+// hydration, reproducing the distinction the pure sorting tests cannot catch.
+function database(members: GroupMemberItem[], cap = 100) {
+  return {
+    from(table: string) {
+      let ids: string[] | undefined;
+      let start = 0;
+      let end = Infinity;
+      let head = false;
+      const query = {
+        select(_fields: string, options?: { head?: boolean }) { head = !!options?.head; return query; },
+        eq() { return query; },
+        is() { return query; },
+        order() { return query; },
+        in(_field: string, values: string[]) { ids = values; return query; },
+        range(from: number, to: number) { start = from; end = to + 1; return query; },
+        limit(limit: number) { end = limit; return query; },
+        maybeSingle() { return Promise.resolve({ data: { created_by: "user-1" }, error: null }); },
+        then(resolve: (result: unknown) => unknown) {
+          let data: unknown[] = [];
+          if (table === "room_members") data = members.map(({ user_id, joined_at }) => ({ user_id, joined_at }));
+          if (table === "profiles") data = members.filter(m => ids?.includes(m.user_id)).map(m => ({ ...m, id: m.user_id }));
+          if (table === "group_membership") data = members.filter(m => ids?.includes(m.wallet_address!));
+          return Promise.resolve({ data: head ? null : data.slice(start, Math.min(end, start + cap)), count: members.length, error: null }).then(resolve);
+        },
+      };
+      return query;
+    },
+  } as unknown as Parameters<typeof paginateGroupMembers>[0];
+}
+
+describe("database-backed pagination", () => {
+  const params = { roomId: "room", currentUserId: "user-1", limit: 2 };
+  for (const sortBy of ["joined_at", "username", "role"] as const) {
+    for (const sortOrder of ["asc", "desc"] as const) {
+      it(`paginates globally by ${sortBy} ${sortOrder} with forward and backward cursors`, async () => {
+        const db = database(mockMembers);
+        const options = { ...params, sortBy, sortOrder };
+        const expected = sortAndPaginateMembers(mockMembers, { limit: 100, offset: 0, sortBy, sortOrder }).paginatedMembers;
+        const first = await paginateGroupMembers(db, options);
+        const second = await paginateGroupMembers(db, { ...options, cursor: first.nextCursor! });
+        expect(first.members).toHaveLength(2);
+        expect(second.members).toHaveLength(2);
+        expect([...first.members, ...second.members].map(m => m.user_id)).toEqual(expected.map(m => m.user_id));
+        expect(second.page).toBe(2);
+        expect(second.totalCount).toBe(4);
+        expect(second.hasMore).toBe(false);
+        expect(second.nextCursor).toBeNull();
+        const back = await paginateGroupMembers(db, { ...options, cursor: second.prevCursor! });
+        expect(back.members).toEqual(first.members);
+        const offsetPage = await paginateGroupMembers(db, { ...options, page: 2 });
+        expect(offsetPage.members).toEqual(second.members);
+      });
+    }
+  }
+
+  it("bounds invalid cursor responses and supports empty display names", async () => {
+    const members = mockMembers.map(m => ({ ...m, display_name: null, username: null }));
+    const db = database(members);
+    const first = await paginateGroupMembers(db, { ...params, sortBy: "username", cursor: "bad" });
+    const second = await paginateGroupMembers(db, { ...params, sortBy: "username", cursor: first.nextCursor! });
+    expect(first.members).toHaveLength(2);
+    expect(second.members.map(m => m.user_id)).toEqual(["user-3", "user-4"]);
+  });
+
+  it("handles empty groups, out-of-range pages and zero limits", async () => {
+    expect(await paginateGroupMembers(database([]), params)).toMatchObject({ members: [], totalCount: 0, totalPages: 0, hasMore: false });
+    expect(await paginateGroupMembers(database(mockMembers), { ...params, page: 8 })).toMatchObject({ members: [], page: 8, hasMore: false });
+    expect(await paginateGroupMembers(database(mockMembers), { ...params, limit: 0 })).toMatchObject({ pageSize: 1 });
+  });
+
+  it("reads multiple database batches without losing members", async () => {
+    const members = Array.from({ length: 205 }, (_, i) => ({ ...mockMembers[0], user_id: `id-${String(i).padStart(3, "0")}`, display_name: `name-${String(205 - i).padStart(3, "0")}` }));
+    const result = await paginateGroupMembers(database(members), { ...params, sortBy: "username" });
+    expect(result.totalCount).toBe(205);
+    expect(result.members.map(m => m.user_id)).toEqual(["id-204", "id-203"]);
   });
 });
