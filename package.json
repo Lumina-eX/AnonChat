@@ -22,7 +22,8 @@
     "test:group-pagination": "node --test scripts/test-group-members-pagination.mjs",
     "start": "next start",
     "cleanup:worker": "node scripts/ephemeral-cleanup-worker.js",
-    "cleanup:trigger": "node scripts/trigger-cleanup.mjs"
+    "cleanup:trigger": "node scripts/trigger-cleanup.mjs",
+    "test:group-stats": "vitest run tests/group-message-statistics.test.ts"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^1.9.5",

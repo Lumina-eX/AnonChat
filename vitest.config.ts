@@ -18,6 +18,7 @@ export default defineConfig({
       "tests/wallet-ownership-proof.test.ts",
       "tests/group-members-pagination.test.ts",
       "tests/stellar-transaction-history.test.ts",
+      "tests/group-message-statistics.test.ts",
     ],
     globals: false,
   },
