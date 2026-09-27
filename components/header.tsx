@@ -11,6 +11,7 @@ import { NotificationPanel } from "./NotificationPanel"
 import { WalletNetworkWarning } from "./wallet-network-warning"
 
 export function Header() {
+  
   const [isOpen, setIsOpen] = useState(false)
 
   return (
