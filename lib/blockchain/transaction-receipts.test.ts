@@ -23,6 +23,9 @@ function makeSupabase() {
             order() { return query; },
             maybeSingle: async () => ({ data: filtered[0] ?? null, error: null }),
             single: async () => ({ data: filtered[0] ?? null, error: null }),
+            then(resolve: (value: { data: any[]; error: null }) => unknown, reject: (reason: unknown) => unknown) {
+              return Promise.resolve({ data: filtered, error: null }).then(resolve, reject);
+            },
           };
           return query;
         },

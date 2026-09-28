@@ -7,6 +7,7 @@ export default defineConfig({
     include: [
       "lib/blockchain/group-verification.test.ts",
       "lib/blockchain/transaction-verification.test.ts",
+      "lib/blockchain/transaction-receipts.test.ts",
       "lib/utils/stellar-address.test.ts",
       "components/GroupVerificationBadge.test.tsx",
       "components/chat-message-bubble.test.tsx",

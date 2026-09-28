@@ -539,7 +539,10 @@ export async function submitMetadataHash(
         logBlockchainOperation("warn", "Failed to persist transaction receipt", {
           transactionHash: result.hash,
           operationId: attemptId,
-          error: receiptError instanceof Error ? receiptError.message : "Unknown error",
+          error: {
+            type: receiptError instanceof Error ? receiptError.name : "UnknownError",
+            message: receiptError instanceof Error ? receiptError.message : "Unknown error",
+          },
         }, correlationId);
       }
     }
@@ -601,7 +604,10 @@ export async function submitMetadataHash(
         logBlockchainOperation("warn", "Failed to persist failed transaction receipt", {
           transactionHash,
           operationId: attemptId,
-          error: receiptError instanceof Error ? receiptError.message : "Unknown error",
+          error: {
+            type: receiptError instanceof Error ? receiptError.name : "UnknownError",
+            message: receiptError instanceof Error ? receiptError.message : "Unknown error",
+          },
         }, correlationId);
       }
     }
@@ -798,7 +804,10 @@ export async function submitAuditEvent(
         logBlockchainOperation("warn", "Failed to persist transaction receipt", {
           transactionHash: result.hash,
           operationId: eventId,
-          error: receiptError instanceof Error ? receiptError.message : "Unknown error",
+          error: {
+            type: receiptError instanceof Error ? receiptError.name : "UnknownError",
+            message: receiptError instanceof Error ? receiptError.message : "Unknown error",
+          },
         }, correlationId);
       }
     }
@@ -863,7 +872,10 @@ export async function submitAuditEvent(
         logBlockchainOperation("warn", "Failed to persist failed transaction receipt", {
           transactionHash,
           operationId: eventId,
-          error: receiptError instanceof Error ? receiptError.message : "Unknown error",
+          error: {
+            type: receiptError instanceof Error ? receiptError.name : "UnknownError",
+            message: receiptError instanceof Error ? receiptError.message : "Unknown error",
+          },
         }, correlationId);
       }
     }

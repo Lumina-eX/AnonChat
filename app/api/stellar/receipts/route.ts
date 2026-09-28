@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { getTransactionReceiptsByOperation } from "@/lib/blockchain/transaction-receipts";
+import type { SupabaseClientLike } from "@/lib/blockchain/stellar-service";
 
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -13,7 +14,10 @@ export async function GET(request: Request) {
   }
 
   try {
-    const receipts = await getTransactionReceiptsByOperation(supabase, operationId);
+    const receipts = await getTransactionReceiptsByOperation(
+      supabase as unknown as SupabaseClientLike,
+      operationId,
+    );
     return NextResponse.json({ receipts });
   } catch (error) {
     console.error("[stellar/receipts] GET error:", error);
