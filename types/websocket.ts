@@ -16,6 +16,7 @@ export type WebSocketServerEventType =
   | "member_removed"
   | "error"
   | "connection_established"
+  | "stellar_transaction_update"
 
 // Client-to-server event types
 export type WebSocketClientEventType =
