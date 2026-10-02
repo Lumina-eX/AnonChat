@@ -7,6 +7,7 @@ export default defineConfig({
     include: [
       "lib/blockchain/group-verification.test.ts",
       "lib/blockchain/transaction-verification.test.ts",
+      "lib/blockchain/transaction-receipts.test.ts",
       "lib/utils/stellar-address.test.ts",
       "components/GroupVerificationBadge.test.tsx",
       "components/chat-message-bubble.test.tsx",
@@ -21,6 +22,7 @@ export default defineConfig({
       "tests/stellar-transaction-history.test.ts",
       "tests/wallet-balance.test.ts",
       "tests/group-message-statistics.test.ts",
+      "tests/stellar-transaction-state-machine.test.ts",
     ],
     globals: false,
   },

@@ -227,6 +227,110 @@ export interface GroupCreationResponse {
   };
 }
 
+// ── Transaction confirmation flow types ──────────────────────────────────────
+
+/**
+ * All possible states in the Stellar transaction confirmation flow.
+ * Transitions: preparing → awaiting_wallet → submitted → confirming → confirmed
+ *                                                      ↘ failed (from any state)
+ */
+export type TransactionConfirmationState =
+  | "preparing"
+  | "awaiting_wallet"
+  | "submitted"
+  | "confirming"
+  | "confirmed"
+  | "failed";
+
+/** Human-readable labels and descriptions for each state. */
+export const TRANSACTION_STATE_LABELS: Record<
+  TransactionConfirmationState,
+  { label: string; description: string }
+> = {
+  preparing: {
+    label: "Preparing",
+    description: "Building and validating the transaction locally…",
+  },
+  awaiting_wallet: {
+    label: "Awaiting Approval",
+    description: "Please approve and sign the transaction in your wallet.",
+  },
+  submitted: {
+    label: "Submitted",
+    description: "Transaction sent to the Stellar network.",
+  },
+  confirming: {
+    label: "Confirming",
+    description: "Awaiting confirmation from the network…",
+  },
+  confirmed: {
+    label: "Confirmed",
+    description: "Transaction successfully included in the ledger.",
+  },
+  failed: {
+    label: "Failed",
+    description: "The transaction was rejected or encountered an error.",
+  },
+};
+
+/** Valid state transitions for the confirmation flow. */
+export const VALID_STATE_TRANSITIONS: Record<
+  TransactionConfirmationState,
+  TransactionConfirmationState[]
+> = {
+  preparing: ["awaiting_wallet", "failed"],
+  awaiting_wallet: ["submitted", "failed"],
+  submitted: ["confirming", "failed"],
+  confirming: ["confirmed", "failed"],
+  confirmed: [],
+  failed: ["preparing"], // allows retry from failed state
+};
+
+export interface TransactionConfirmationContext {
+  /** Unique identifier for this flow instance */
+  id: string;
+  /** Current state in the machine */
+  state: TransactionConfirmationState;
+  /** Stellar transaction hash, available after submission */
+  transactionHash?: string | null;
+  /** Ledger number, available after confirmation */
+  ledger?: number | null;
+  /** Fee charged for the transaction in stroops */
+  feeCharged?: string | null;
+  /** Explorer URL for the transaction */
+  explorerUrl?: string | null;
+  /** Human-readable error message when state is 'failed' */
+  errorMessage?: string | null;
+  /** Whether the transaction can be retried */
+  retryable: boolean;
+  /** Number of retry attempts made */
+  retryCount: number;
+  /** Maximum allowed retries */
+  maxRetries: number;
+  /** Timestamp when the flow started */
+  startedAt: string;
+  /** Timestamp of the last state change */
+  updatedAt: string;
+  /** Optional group/room ID associated with this transaction */
+  groupId?: string | null;
+  /** Optional attempt ID from the database */
+  attemptId?: string | null;
+  /** The type of transaction being performed */
+  transactionType: "metadata_hash" | "audit_event" | "generic";
+  /** Optional human-readable label for the operation */
+  operationLabel?: string;
+}
+
+export type TransactionConfirmationAction =
+  | { type: "START_PREPARING" }
+  | { type: "AWAIT_WALLET" }
+  | { type: "SUBMIT"; transactionHash: string; feeCharged?: string; explorerUrl?: string }
+  | { type: "START_CONFIRMING" }
+  | { type: "CONFIRM"; ledger: number }
+  | { type: "FAIL"; errorMessage: string; retryable?: boolean }
+  | { type: "RETRY" }
+  | { type: "RESET" };
+
 // ── Transaction history types ───────────────────────────────────────────────
 
 export type WalletTransactionStatus = "successful" | "failed" | "pending";

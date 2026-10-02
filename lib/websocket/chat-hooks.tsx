@@ -349,3 +349,33 @@ export function RoomUsersList({ users }: { users: string[] }) {
     </div>
   )
 }
+
+/**
+ * useStellarTransactionUpdates — subscribes to real-time stellar_transaction_update
+ * WebSocket events so the UI can immediately reflect state changes for on-going
+ * transactions without requiring a manual poll or page refresh.
+ *
+ * Usage:
+ *   useStellarTransactionUpdates(flowId, (payload) => {
+ *     // payload.state is the new TransactionConfirmationState
+ *   });
+ */
+export function useStellarTransactionUpdates(
+  flowId: string | null | undefined,
+  onUpdate: (payload: {
+    flowId: string
+    state: string
+    transactionHash?: string | null
+    ledger?: number | null
+    errorMessage?: string | null
+  }) => void,
+) {
+  const callbackRef = useRef(onUpdate)
+  callbackRef.current = onUpdate
+
+  useWebSocketMessage("stellar_transaction_update", (msg: WebSocketMessage) => {
+    const payload = msg.payload as any
+    if (!flowId || payload?.flowId !== flowId) return
+    callbackRef.current?.(payload)
+  })
+}
