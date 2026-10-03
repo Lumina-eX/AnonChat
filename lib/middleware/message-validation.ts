@@ -162,6 +162,9 @@ export function validateMessage(payload: Record<string, any>, context: 'http' | 
       content: 'string',
       roomId: 'string',
       id: 'string',
+      // idempotency_key is an optional UUID string — validated for format
+      // separately in the idempotency layer; here we only check the type.
+      idempotency_key: 'string',
     };
 
     // Validate structure
