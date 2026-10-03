@@ -14,6 +14,7 @@ import { upsertTransactionReceipt } from "./transaction-receipts";
 const DEFAULT_MAX_ATTEMPTS = 3;
 const BASE_RETRY_DELAY_MS = 1000;
 const MAX_RETRY_DELAY_MS = 30000;
+const NATIVE_ANCHOR_AMOUNT = "0.0000001";
 
 /**
  * Determines if an error is retryable based on its type and content.
@@ -246,6 +247,46 @@ export async function updateTransactionAttemptStatus(
 }
 
 /**
+ * Blocks submission when the source account cannot cover the fee in XLM.
+ * Returns an error message when execution must stop, or null when it may proceed.
+ */
+async function rejectionForInsufficientBalance({
+  walletId,
+  balances,
+  feeStroops,
+  attemptId,
+  supabase,
+}: {
+  walletId: string;
+  balances: HorizonBalanceRecord[];
+  feeStroops: string;
+  attemptId?: string;
+  supabase?: SupabaseClientLike;
+}): Promise<string | null> {
+  const check = assessWalletBalance({
+    walletId,
+    balances,
+    requiredFee: stroopsToXlm(feeStroops),
+    operationAmount: NATIVE_ANCHOR_AMOUNT,
+  });
+
+  if (check.status === "ok") return null;
+
+  const errorMsg = check.error ?? "Wallet balance check failed";
+  if (attemptId && supabase) {
+    await updateTransactionAttemptStatus(supabase, attemptId, {
+      status: "failed",
+      lastError: errorMsg,
+      lastErrorType: check.status === "insufficient_funds" ? "InsufficientFunds" : "HorizonError",
+      failedAt: new Date().toISOString(),
+      incrementAttempt: true,
+    });
+  }
+
+  return errorMsg;
+}
+
+/**
  * Submits a transaction to Stellar with retry logic and exponential backoff.
  */
 async function submitWithRetry(
@@ -468,6 +509,21 @@ export async function submitMetadataHash(
 
     const feeToUse = maxFee ? maxFee.toString() : StellarSdk.BASE_FEE;
 
+    const balanceError = await rejectionForInsufficientBalance({
+      walletId: sourcePublicKey,
+      balances: account.balances ?? [],
+      feeStroops: feeToUse,
+      attemptId,
+      supabase: options?.supabase,
+    });
+    if (balanceError) {
+      return {
+        success: false,
+        error: balanceError,
+        attemptId,
+      };
+    }
+
     const transaction = new StellarSdk.TransactionBuilder(account, {
       fee: feeToUse,
       networkPassphrase: config.network === "testnet"
@@ -478,7 +534,7 @@ export async function submitMetadataHash(
         StellarSdk.Operation.payment({
           destination: sourcePublicKey,
           asset: StellarSdk.Asset.native(),
-          amount: "0.0000001",
+          amount: NATIVE_ANCHOR_AMOUNT,
         })
       )
       .addMemo(StellarSdk.Memo.text(memoGroupId))
@@ -732,6 +788,22 @@ export async function submitAuditEvent(
     ]);
 
     const feeToUse = maxFee ? maxFee.toString() : StellarSdk.BASE_FEE;
+
+    const balanceError = await rejectionForInsufficientBalance({
+      walletId: sourcePublicKey,
+      balances: account.balances ?? [],
+      feeStroops: feeToUse,
+      attemptId,
+      supabase: options?.supabase,
+    });
+    if (balanceError) {
+      return {
+        success: false,
+        error: balanceError,
+        attemptId,
+      };
+    }
+
     const transaction = new StellarSdk.TransactionBuilder(account, {
       fee: feeToUse,
       networkPassphrase: config.network === "testnet"
@@ -742,7 +814,7 @@ export async function submitAuditEvent(
         StellarSdk.Operation.payment({
           destination: sourcePublicKey,
           asset: StellarSdk.Asset.native(),
-          amount: "0.0000001",
+          amount: NATIVE_ANCHOR_AMOUNT,
         })
       )
       .addMemo(StellarSdk.Memo.text(auditMemo))
