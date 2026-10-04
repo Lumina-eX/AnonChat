@@ -9,6 +9,7 @@ import { loadStellarConfig, isConfigured, getExplorerUrl } from "./stellar-confi
 import { logBlockchainOperation, generateCorrelationId } from "./logger";
 import { deriveMemoGroupId, validateMemoGroupId, STELLAR_MEMO_MAX_BYTES } from "./memo";
 import { upsertTransactionReceipt } from "./transaction-receipts";
+import { assessWalletBalance, stroopsToXlm, type HorizonBalanceRecord } from "./wallet-balance";
 
 // Retry configuration
 const DEFAULT_MAX_ATTEMPTS = 3;
