@@ -10,6 +10,18 @@ import { getRoomTTL } from "@/lib/ephemeral-cleanup"
 import { type NextRequest, NextResponse } from "next/server"
 import { validateMessage, ValidationErrorType } from "@/lib/middleware/message-validation"
 import { insertMessageIdempotent } from "@/lib/messages/idempotency"
+import {
+  GroupPermissionError,
+  checkGroupPermission,
+} from "@/lib/authorization/group-permissions"
+
+function permissionDeniedResponse(error: GroupPermissionError) {
+  const status = error.code === "UNAUTHENTICATED" ? 401 : 403
+  return NextResponse.json(
+    { error: error.message, code: error.code, permission: error.permission },
+    { status },
+  )
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -32,22 +44,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized. You must be logged in to view messages." }, { status: 401 })
     }
 
-    // Verify user is a member of this room
-    const { data: membership, error: memberErr } = await supabase
-      .from("room_members")
-      .select("id, removed_at")
-      .eq("room_id", roomId)
-      .eq("user_id", user.id)
-      .maybeSingle()
-
-    if (memberErr) throw memberErr
-
-    if (!membership) {
-      return NextResponse.json({ error: "Forbidden. You are not a member of this room." }, { status: 403 })
-    }
-
-    if (membership.removed_at) {
-      return NextResponse.json({ error: "Forbidden. You have been removed from this room." }, { status: 403 })
+    // Centralized role-based authorization for viewing group content.
+    const permission = await checkGroupPermission(supabase, {
+      userId: user.id,
+      groupId: roomId,
+      action: "view_group_content",
+    })
+    if (!permission.allowed) {
+      return permissionDeniedResponse(permission.error)
     }
 
     const { data, error } = await supabase
@@ -61,6 +65,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ messages: data })
   } catch (error) {
+    if (error instanceof GroupPermissionError) {
+      console.warn("[v0] GET /api/messages permission denied:", error.code)
+      return permissionDeniedResponse(error)
+    }
     console.error("[v0] GET /api/messages error:", error)
     return NextResponse.json({ error: "Failed to fetch messages" }, { status: 500 })
   }
@@ -89,9 +97,28 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 })
     }
 
-    // Verify message exists and user has access (implicitly via RLS or explicit check)
-    // For simplicity and matching existing patterns, we'll just attempt the update
-    // Supabase RLS should handle permission if configured
+    // Resolve the message's group and ownership before authorizing the update.
+    const { data: existing, error: fetchErr } = await supabase
+      .from("messages")
+      .select("id, user_id, room_id")
+      .eq("id", id)
+      .maybeSingle()
+
+    if (fetchErr) throw fetchErr
+    if (!existing) {
+      return NextResponse.json({ error: "Message not found" }, { status: 404 })
+    }
+
+    const permission = await checkGroupPermission(supabase, {
+      userId: user.id,
+      groupId: existing.room_id as string,
+      action: "update_message_status",
+      resourceOwnerId: existing.user_id as string,
+    })
+    if (!permission.allowed) {
+      return permissionDeniedResponse(permission.error)
+    }
+
     const { data, error } = await supabase
       .from("messages")
       .update({ status })
@@ -106,6 +133,10 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ message: data[0], success: true })
   } catch (error) {
+    if (error instanceof GroupPermissionError) {
+      console.warn("[v0] PATCH /api/messages permission denied:", error.code)
+      return permissionDeniedResponse(error)
+    }
     console.error("[v0] PATCH /api/messages error:", error)
     return NextResponse.json({ error: "Failed to update message status" }, { status: 500 })
   }
@@ -151,7 +182,7 @@ export async function PUT(request: NextRequest) {
 
     const { data: existing, error: fetchErr } = await supabase
       .from("messages")
-      .select("id, user_id, created_at")
+      .select("id, user_id, room_id, created_at")
       .eq("id", id)
       .maybeSingle()
 
@@ -160,8 +191,15 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 })
     }
 
-    if (existing.user_id !== user.id) {
-      return NextResponse.json({ error: "Forbidden. You can only edit your own messages." }, { status: 403 })
+    // Editing is owner-only unless the group policy grants moderation capabilities.
+    const permission = await checkGroupPermission(supabase, {
+      userId: user.id,
+      groupId: existing.room_id as string,
+      action: "edit_message",
+      resourceOwnerId: existing.user_id as string,
+    })
+    if (!permission.allowed) {
+      return permissionDeniedResponse(permission.error)
     }
 
     const createdAt = new Date(existing.created_at as string).getTime()
@@ -196,8 +234,73 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ message: data[0], success: true })
   } catch (error) {
+    if (error instanceof GroupPermissionError) {
+      console.warn("[v0] PUT /api/messages permission denied:", error.code)
+      return permissionDeniedResponse(error)
+    }
     console.error("[v0] PUT /api/messages error:", error)
     return NextResponse.json({ error: "Failed to edit message" }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const supabase = await createClient()
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get("id")
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 })
+    }
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from("messages")
+      .select("id, user_id, room_id")
+      .eq("id", id)
+      .maybeSingle()
+
+    if (fetchErr) throw fetchErr
+    if (!existing) {
+      return NextResponse.json({ error: "Message not found" }, { status: 404 })
+    }
+
+    const permission = await checkGroupPermission(supabase, {
+      userId: user.id,
+      groupId: existing.room_id as string,
+      action: "delete_message",
+      resourceOwnerId: existing.user_id as string,
+    })
+    if (!permission.allowed) {
+      return permissionDeniedResponse(permission.error)
+    }
+
+    const { error } = await supabase.from("messages").delete().eq("id", id)
+    if (error) throw error
+
+    await recordGroupAuditEvent({
+      supabase,
+      groupId: existing.room_id as string,
+      eventType: "message_deleted",
+      actorUserId: user.id,
+      targetUserId: existing.user_id as string,
+      metadata: { message_id: id, permission: permission.role },
+    })
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    if (error instanceof GroupPermissionError) {
+      console.warn("[v0] DELETE /api/messages permission denied:", error.code)
+      return permissionDeniedResponse(error)
+    }
+    console.error("[v0] DELETE /api/messages error:", error)
+    return NextResponse.json({ error: "Failed to delete message" }, { status: 500 })
   }
 }
 
@@ -252,7 +355,7 @@ export async function POST(request: NextRequest) {
     const rate = await checkAndConsumeWalletMessageSlot(walletKey, room_id, policy)
     if (!rate.allowed) {
       console.warn(
-        `[wallet-msg-rate-limit] violation limit=${policy.limit} windowSec=${policy.windowSec} walletPrefix=${walletKey.slice(0, 10)} room_id=${room_id}`,
+        `wallet-msg-rate-limit violation limit=${policy.limit} windowSec=${policy.windowSec} walletPrefix=${walletKey.slice(0, 10)} room_id=${room_id}`,
       )
       return NextResponse.json(
         {
@@ -264,88 +367,35 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { data: membership, error: memberErr } = await supabase
-      .from("room_members")
-      .select("id, removed_at")
-      .eq("room_id", room_id)
-      .eq("user_id", user.id)
-      .maybeSingle()
-
-    if (memberErr) throw memberErr
-
-    if (membership?.removed_at) {
-      return NextResponse.json(
-        { error: "You have been removed from this room and cannot send messages" },
-        { status: 403 },
-      )
+    // Centralized authorization: membership + role + action evaluation.
+    const permission = await checkGroupPermission(supabase, {
+      userId: user.id,
+      groupId: room_id,
+      action: "send_message",
+    })
+    if (!permission.allowed) {
+      return permissionDeniedResponse(permission.error)
     }
 
-    if (!membership) {
-      const { data: insertedMembership, error: insertMemberErr } = await supabase
-        .from("room_members")
-        .insert({
-          room_id,
-          user_id: user.id,
-        })
-        .select("id")
-        .single()
-      if (insertMemberErr) throw insertMemberErr
+    const ttl = is_ephemeral ? getRoomTTL(room_id) : null
 
-      await recordGroupAuditEvent({
-        supabase,
-        groupId: room_id,
-        eventType: "member_joined",
-        actorUserId: user.id,
-        targetUserId: user.id,
-        metadata: {
-          membership_id: insertedMembership?.id ?? null,
-          source: "message_send_auto_join",
-        },
-      })
-    }
-
-    // Prepare message data
-    const messageData: Record<string, unknown> = {
-      user_id: user.id,
+    const inserted = await insertMessageIdempotent(supabase, {
       room_id,
+      user_id: user.id,
       content: sanitizedContent,
-      is_encrypted: false,
-      status: "sent",
-    }
+      is_ephemeral,
+      reply_to_id,
+      expires_at: ttl ? new Date(Date.now() + ttl).toISOString() : null,
+      idempotency_key: idempotency_key ?? null,
+    })
 
-    if (reply_to_id) {
-      messageData.reply_to_id = reply_to_id
-    }
-
-    // Handle ephemeral messages
-    if (is_ephemeral) {
-      const ttl = await getRoomTTL(room_id)
-      messageData.is_ephemeral = true
-      messageData.expires_at = new Date(Date.now() + ttl * 1000).toISOString()
-    }
-
-    // Attach idempotency key when the client provided one
-    if (idempotency_key) {
-      messageData.idempotency_key = idempotency_key
-    }
-
-    // --- Idempotent insert ---
-    // insertMessageIdempotent performs a pre-check for the key, then inserts.
-    // On a concurrent collision (race condition) it catches the 23505 unique
-    // violation and returns the winning row, so the client always receives a
-    // valid message object regardless of how many retries were made.
-    const { message: savedMessage, isDuplicate, error: insertError } =
-      await insertMessageIdempotent(supabase, messageData as any, "http")
-
-    if (insertError || !savedMessage) {
-      throw new Error(insertError ?? "Insert returned no data")
-    }
-
-    // 200 for duplicate (idempotent replay), 201 for new creation
-    const status = isDuplicate ? 200 : 201
-    return NextResponse.json({ message: savedMessage, success: true, duplicate: isDuplicate }, { status })
+    return NextResponse.json({ message: inserted.message, duplicate: inserted.duplicate })
   } catch (error) {
+    if (error instanceof GroupPermissionError) {
+      console.warn("[v0] POST /api/messages permission denied:", error.code)
+      return permissionDeniedResponse(error)
+    }
     console.error("[v0] POST /api/messages error:", error)
-    return NextResponse.json({ error: "Failed to create message" }, { status: 500 })
+    return NextResponse.json({ error: "Failed to send message" }, { status: 500 })
   }
 }

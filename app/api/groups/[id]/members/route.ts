@@ -6,7 +6,7 @@ import {
   verifyWalletAuthorization,
 } from "@/lib/auth/wallet-authorization"
 import { validateWalletAddressWithMessage } from "@/lib/auth/validation"
-import { requireGroupRole } from "@/lib/middleware/group-roles"
+import { requireGroupPermission } from "@/lib/middleware/group-access"
 import { recordGroupAuditEvent } from "@/lib/blockchain/audit"
 import { insertRoomActivity } from "@/lib/activity/room-activity"
 import {
@@ -36,7 +36,7 @@ type RemoveMemberRpcResult = {
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+): Promise<NextResponse> {
   const { id: groupId } = await params
 
   if (!groupId) {
@@ -109,16 +109,15 @@ export async function DELETE(
       )
     }
 
-    const roleCheck = await requireGroupRole({
+    const permissionCheck = await requireGroupPermission({
       supabase,
       groupId,
-      minimumRole: "moderator",
-      callerWallet,
+      permission: "member:remove",
       userId: user.id,
     })
 
-    if (roleCheck instanceof NextResponse) {
-      return roleCheck
+    if (permissionCheck instanceof NextResponse) {
+      return permissionCheck
     }
 
     const { data: group, error: groupError } = await supabase
@@ -275,7 +274,7 @@ export async function DELETE(
     }
 
     console.info(
-      `[groups/members] wallet ${targetWallet.slice(0, 8)}... removed from group ${groupId} by ${user.id} (${roleCheck.role})`,
+      `[groups/members] wallet ${targetWallet.slice(0, 8)}... removed from group ${groupId} by ${user.id} (${permissionCheck.role})`,
     )
 
     return NextResponse.json({

@@ -3,6 +3,7 @@ import http from "http"
 import { randomUUID } from "crypto"
 import { validateMessage, ValidationErrorType } from "../middleware/message-validation"
 import { isValidUUID, getIdempotencyMetrics } from "../messages/idempotency"
+import { permissionService, GroupPermission } from "../permissions/group-permission-service"
 
 // Type definitions
 interface User {
@@ -16,7 +17,7 @@ interface ClientConnection {
   ws: WebSocket
   userId?: string
   user?: User
-  heartbeatTimer?: NodeJS.Timer
+  heartbeatTimer?: NodeJS.Timeout
 }
 
 interface Room {
@@ -70,6 +71,41 @@ function evictExpiredKeys(): void {
 
 const HEARTBEAT_INTERVAL = 30000 // 30 seconds
 const PRESENCE_GRACE_PERIOD = 5000 // 5 seconds
+
+/**
+ * Authorization helper for WebSocket handlers.
+ *
+ * Delegates to the centralized permission service so that real-time channels
+ * enforce the exact same rules as REST APIs. Never trust client-supplied roles.
+ */
+function authorizeGroupAction(
+  connection: ClientConnection,
+  groupId: string | undefined,
+  permission: GroupPermission,
+  resourceOwnerId?: string,
+): { allowed: boolean; reason?: string } {
+  if (!connection.userId) {
+    return { allowed: false, reason: "Not authenticated" }
+  }
+  if (!groupId) {
+    return { allowed: false, reason: "Missing groupId" }
+  }
+
+  try {
+    const decision = permissionService.checkPermission({
+      userId: connection.userId,
+      groupId,
+      permission,
+      resourceOwnerId,
+    })
+    return decision.allowed
+      ? { allowed: true }
+      : { allowed: false, reason: decision.reason ?? "Forbidden" }
+  } catch (error) {
+    console.error("[WebSocket] Permission evaluation failed:", error)
+    return { allowed: false, reason: "Authorization error" }
+  }
+}
 
 export function createWebSocketServer(port: number = 3001) {
   const server = http.createServer()
@@ -162,6 +198,10 @@ export function createWebSocketServer(port: number = 3001) {
           const eventGroupId = event.payload.groupId
           if (event.type === "member_removed" && typeof eventGroupId === "string") {
             removeUserFromRoom(parsed.userId, eventGroupId)
+          }
+
+          if (event.type === "role_updated" && typeof eventGroupId === "string") {
+            permissionService.invalidateCache(parsed.userId, eventGroupId)
           }
 
           sendToUser(parsed.userId, {
@@ -376,6 +416,22 @@ export function createWebSocketServer(port: number = 3001) {
               break
             }
 
+            const joinAuth = authorizeGroupAction(
+              connection,
+              roomId,
+              GroupPermission.VIEW_GROUP,
+            )
+            if (!joinAuth.allowed) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: { message: joinAuth.reason ?? "Forbidden", type: "forbidden" },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
             if (!rooms.has(roomId)) {
               rooms.set(roomId, { id: roomId, users: new Set() })
             }
@@ -423,6 +479,22 @@ export function createWebSocketServer(port: number = 3001) {
                 JSON.stringify({
                   type: "error",
                   payload: { message: "Not authenticated" },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
+            const sendAuth = authorizeGroupAction(
+              connection,
+              msgRoomId,
+              GroupPermission.SEND_MESSAGE,
+            )
+            if (!sendAuth.allowed) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: { message: sendAuth.reason ?? "Forbidden", type: "forbidden" },
                   timestamp: Date.now(),
                 }),
               )
@@ -582,6 +654,23 @@ export function createWebSocketServer(port: number = 3001) {
               break
             }
 
+            const editAuth = authorizeGroupAction(
+              connection,
+              editRoomId,
+              GroupPermission.EDIT_OWN_MESSAGE,
+              message.payload.authorId,
+            )
+            if (!editAuth.allowed) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: { message: editAuth.reason ?? "Forbidden", type: "forbidden" },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
             // Validate message content for edits
             const validation = validateMessage(
               { content: editContent, id: editMessageId, roomId: editRoomId },
@@ -633,6 +722,22 @@ export function createWebSocketServer(port: number = 3001) {
               break
             }
 
+            const readAuth = authorizeGroupAction(
+              connection,
+              readRoomId,
+              GroupPermission.VIEW_GROUP,
+            )
+            if (!readAuth.allowed) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: { message: readAuth.reason ?? "Forbidden", type: "forbidden" },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
             // Broadcast read receipt to the room
             // The actual read receipt will be persisted to the database via the REST API
             broadcastToRoom(readRoomId, {
@@ -652,6 +757,22 @@ export function createWebSocketServer(port: number = 3001) {
           case "typing": {
             const typingRoomId = message.payload.roomId
 
+            const typingAuth = authorizeGroupAction(
+              connection,
+              typingRoomId,
+              GroupPermission.SEND_MESSAGE,
+            )
+            if (!typingAuth.allowed) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: { message: typingAuth.reason ?? "Forbidden", type: "forbidden" },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
             broadcastToRoom(typingRoomId, {
               type: "user_typing",
               payload: {
@@ -666,6 +787,22 @@ export function createWebSocketServer(port: number = 3001) {
 
           case "stop_typing": {
             const stopTypingRoomId = message.payload.roomId
+
+            const stopTypingAuth = authorizeGroupAction(
+              connection,
+              stopTypingRoomId,
+              GroupPermission.SEND_MESSAGE,
+            )
+            if (!stopTypingAuth.allowed) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: { message: stopTypingAuth.reason ?? "Forbidden", type: "forbidden" },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
 
             broadcastToRoom(stopTypingRoomId, {
               type: "user_stop_typing",
