@@ -1,8 +1,14 @@
 /**
  * Reusable wallet authorization for sensitive API actions.
  *
- * Combines one-time nonce consumption with Ed25519 signature verification
+ * Combines one-time nonce consumption with Edd25519 signature verification
  * to prove wallet ownership before destructive or privileged operations.
+ *
+ * Supports Stellar SEP-10 challenge-transaction authentication in addition
+ * to the legacy nonce+signature flow. When a SEP-10 challenge is supplied,
+ * the full challenge is validated (server signature, expiration, network,
+ * replay protection, wallet signature) and the authenticated account is
+ * bound to the expected wallet address.
  *
  * Usage:
  *   const auth = await verifyWalletAuthorization({ walletAddress, signature }, "delete_group");
@@ -14,6 +20,10 @@ import { NextResponse } from "next/server";
 import { consumeNonce, verifyWalletSignature } from "@/lib/auth/stellar-verify";
 import { validateWalletAddressWithMessage } from "@/lib/auth/validation";
 import { recordGroupAuditEvent } from "@/lib/blockchain/audit";
+import {
+  validateSep10Challenge,
+  type Sep10ValidationOptions,
+} from "@/lib/auth/sep10";
 
 export type WalletAuthorizationResult =
   | { ok: true; walletAddress: string; nonce: string }
@@ -22,27 +32,34 @@ export type WalletAuthorizationResult =
 export interface WalletAuthPayload {
   walletAddress?: string;
   signature?: string;
+  /** SEP-10 challenge transaction XML (signed by the wallet). */
+  challenge?: string;
+  /** Optional explicit nonce for the legacy flow. */
+  nonce?: string;
 }
 
 export interface WalletAuditContext {
   supabase: any;
   groupId?: string;
+  /** Optional SEP-10 validation options (server account, netword, home domain). */
+  sep10?: Sep10ValidationOptions;
 }
 
 /**
- * Verifies wallet authorization via nonce + signature.
- * Returns standardized error responses for invalid or missing signatures.
+ * Verifies wallet authorization via nonce + signature or a SEP-10
+ * challenge transaction. Returns standardized error responses for invalid
+ * or missing signatures.
  *
- * When `auditContext` is provided, every verification attempt (success or
- * failure) is recorded to the `group_audit_events` audit trail for
- * accountability and debugging.
+ * When auditContext is provided, every verification attempt (success or
+ * failure) is recorded to the group_audit_events audit trail for accountability
+ * and debugging.
  */
 export async function verifyWalletAuthorization(
   payload: WalletAuthPayload,
   action?: string,
   auditContext?: WalletAuditContext,
 ): Promise<WalletAuthorizationResult> {
-  const { walletAddress, signature } = payload;
+  const { walletAddress, signature, challenge } = payload;
   const logPrefix = action ? `[${action}]` : "[wallet-auth]";
   const address = walletAddress as string;
 
@@ -59,6 +76,7 @@ export async function verifyWalletAuthorization(
       metadata: {
         action: action ?? "wallet_auth",
         walletAddress: address,
+        method: challenge ? "sep10" : "nonce",
         ...(reason ? { reason } : {}),
         verifiedAt: new Date().toISOString(),
       },
@@ -72,7 +90,7 @@ export async function verifyWalletAuthorization(
 
   const walletError = validateWalletAddressWithMessage(address);
   if (walletError) {
-    console.warn(`${logPrefix} validation failed: ${walletError}`);
+    console.warn("${logPrefix} validation failed: ${walletError}");
     await recordAudit("wallet_verification_failed", walletError);
     return {
       ok: false,
@@ -80,6 +98,62 @@ export async function verifyWalletAuthorization(
     };
   }
 
+  // SEP-10 challenge flow: validate the full challenge transaction.
+  if (challenge !== undefined) {
+    if (typeof challenge !== "string" || challenge.trim() === "") {
+      console.warn(`${logPrefix} validation failed: challenge is required`);
+      await recordAudit("wallet_verification_failed", "challenge is required");
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { error: "challenge is required" },
+          { status: 400 },
+        ),
+      };
+    }
+
+    const sep10Result = validateSep10Challenge(challenge, {
+      ...(auditContext?.sep10 ?? {}),
+      expectedAccount: address,
+    });
+
+    if (!sep10Result.ok) {
+      console.warn(
+        `${logPrefix} SEP-10 challenge validation failed: ${sep10Result.reason}`,
+      );
+      await recordAudit("wallet_verification_failed", sep10Result.reason);
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { error: "Challenge verification failed." },
+          { status: 401 },
+        ),
+      };
+    }
+
+    if (sep10Result.account !== address) {
+      console.warn(
+        `${logPrefix} SEP-10 account mismatch: ${sep10Result.account.substring(0, 8)}... != ${address.substring(0, 8)}...`,
+      );
+      await recordAudit(
+        "wallet_verification_failed",
+        "Challenge account does not match wallet address",
+      );
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { error: "Wallet address does not match authenticated account" },
+          { status: 403 },
+        ),
+      };
+    }
+
+    console.log(`${logPrefix} wallet authorized via SEP-10: ${address.substring(0, 8)}...`);
+    await recordAudit("wallet_verified");
+    return { ok: true, walletAddress: address, nonce: sep10Result.nonce };
+  }
+
+  // Legacy nonce + signature flow.
   if (!signature || typeof signature !== "string" || signature.trim() === "") {
     console.warn(`${logPrefix} validation failed: signature is required`);
     await recordAudit("wallet_verification_failed", "signature is required");

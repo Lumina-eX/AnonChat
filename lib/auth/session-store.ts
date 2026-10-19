@@ -8,6 +8,21 @@ export interface SessionRecord {
   lastActivityAt: number;
   userAgent?: string;
   ipAddress?: string;
+  /** SEP-10 authentication metadata bound to this session. */
+  authenticatedAt?: number;
+  networkPassphrase?: string;
+  challengeHash?: string;
+  authMethod?: "sep-10";
+}
+
+export interface CreateSessionParams {
+  walletAddress: string;
+  userAgent?: string;
+  ipAddress?: string;
+  /** Only set after successful SEP-10 challenge verification. */
+  authenticated?: boolean;
+  networkPassphrase?: string;
+  challengeHash?: string;
 }
 
 const DEFAULT_SESSION_TTL_SEC = 7 * 24 * 60 * 60; // 7 days
@@ -27,7 +42,7 @@ function sessionKey(sessionId: string): string {
 }
 
 function walletSessionsKey(walletAddress: string): string {
-  return `wallet_sessions:${walletAddress.toLowerCase()}`;
+  return `wallet_sessions:${normalizeWallet(walletAddress)}`;
 }
 
 function normalizeWallet(walletAddress: string): string {
@@ -35,11 +50,7 @@ function normalizeWallet(walletAddress: string): string {
 }
 
 /** Create a new session for a wallet. Returns the sessionId. */
-export async function createSession(params: {
-  walletAddress: string;
-  userAgent?: string;
-  ipAddress?: string;
-}): Promise<string> {
+export async function createSession(params: CreateSessionParams): Promise<string> {
   const sessionId = crypto.randomUUID();
   const now = Date.now();
   const ttlSec = getSessionTTLSec();
@@ -52,6 +63,13 @@ export async function createSession(params: {
     userAgent: params.userAgent,
     ipAddress: params.ipAddress,
   };
+
+  if (params.authenticated) {
+    record.authenticatedAt = now;
+    record.networkPassphrase = params.networkPassphrase;
+    record.challengeHash = params.challengeHash;
+    record.authMethod = "sep-10";
+  }
 
   const redis = await getRedisClient();
 
@@ -69,6 +87,7 @@ export async function createSession(params: {
   logger.info("Session created", {
     sessionId,
     walletAddress: params.walletAddress.substring(0, 8) + "...",
+    authenticated: Boolean(params.authenticated),
   });
 
   return sessionId;
@@ -301,6 +320,31 @@ export async function cleanupExpiredSessions(): Promise<number> {
   }
 
   return cleaned;
+}
+
+/** Return the authenticated wallet for a session, or null if unauthenticated/invalid. */
+export async function getAuthenticatedWallet(
+  sessionId: string,
+): Promise<string | null> {
+  const record = await validateSession(sessionId);
+  if (!record) {
+    return null;
+  }
+  if (!record.authenticatedAt) {
+    return null;
+  }
+  return record.walletAddress;
+}
+
+/** Check whether a session is authenticated and bound to the expected wallet. */
+export async function isSessionAuthenticatedForWallet(
+  sessionId: string,
+  walletAddress: string,
+): Promise<boolean> {
+  const record = await validateSession(sessionId);
+  if (!record) return false;
+  if (!record.authenticatedAt) return false;
+  return record.walletAddress === normalizeWallet(walletAddress);
 }
 
 // In-memory fallback stores (when Redis is unavailable)

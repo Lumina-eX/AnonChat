@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "main",
+    "origin",
+    "security/issue-294-implement-stellar-sep-10-authentication"
+  ],
+  "parent": {
+    "main": null,
+    "origin": "main",
+    "security/issue-294-implement-stellar-sep-10-authentication": "main"
+  },
+  "order": [
+    "main",
+    "origin",
+    "security/issue-294-implement-stellar-sep-10-authentication"
+  ]
+}

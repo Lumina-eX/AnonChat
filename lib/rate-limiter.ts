@@ -17,7 +17,7 @@ class RateLimiter {
   private config: RateLimitConfig
 
   constructor(config: Partial<RateLimitConfig> = {}) {
-    this.config = { ...DEFAULT_CONFIG, ...config }
+    this.config = { ...DEFAULT_CONFIG,...config }
   }
 
   check(walletAddress: string): { allowed: boolean; remainingMs?: number } {

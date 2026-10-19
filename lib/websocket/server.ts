@@ -3,6 +3,7 @@ import http from "http"
 import { randomUUID } from "crypto"
 import { validateMessage, ValidationErrorType } from "../middleware/message-validation"
 import { isValidUUID, getIdempotencyMetrics } from "../messages/idempotency"
+import { verifySessionToken, SessionVerificationError } from "../auth/session"
 
 // Type definitions
 interface User {
@@ -17,6 +18,7 @@ interface ClientConnection {
   userId?: string
   user?: User
   heartbeatTimer?: NodeJS.Timer
+  authenticated?: boolean
 }
 
 interface Room {
@@ -321,6 +323,7 @@ export function createWebSocketServer(port: number = 3001) {
   wss.on("connection", (ws: WebSocket) => {
     const clientId = randomUUID()
     const connection: ClientConnection = { ws }
+    connection.authenticated = false
 
     clients.set(clientId, connection)
     console.log(`[WebSocket] Client connected: ${clientId}`)
@@ -344,20 +347,53 @@ export function createWebSocketServer(port: number = 3001) {
 
         switch (message.type) {
           case "auth": {
-            // Authenticate user
-            connection.userId = message.payload.userId
-            connection.user = {
-              id: message.payload.userId,
-              walletAddress: message.payload.walletAddress,
-              displayName: message.payload.displayName,
-              avatarUrl: message.payload.avatarUrl,
+            // Authenticate user via verified SEP-10 application session token.
+            // Wallet ownership must never be inferred from client-provided
+            // addresses alone — only a server-verified session is accepted.
+            const sessionToken: unknown = message.payload?.sessionToken
+            if (typeof sessionToken !== "string" || sessionToken.length === 0) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: { message: "Authentication failed" },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
             }
 
-            registerUserConnection(clientId, connection.user)
-            setUserOnline(connection.user)
+            try {
+              const session = verifySessionToken(sessionToken)
+              connection.userId = session.userId
+              connection.user = {
+                id: session.userId,
+                walletAddress: session.walletAddress,
+                displayName: session.displayName,
+                avatarUrl: session.avatarUrl,
+              }
+              connection.authenticated = true
 
-            // Send a snapshot so late listeners can initialize immediately
-            sendPresenceSnapshot(ws)
+              registerUserConnection(clientId, connection.user)
+              setUserOnline(connection.user)
+
+              // Send a snapshot so late listeners can initialize immediately
+              sendPresenceSnapshot(ws)
+            } catch (error) {
+              const reason =
+                error instanceof SessionVerificationError ? error.code : "invalid_session"
+              console.warn("[WebSocket] Authentication rejected", {
+                clientId,
+                reason,
+              })
+              connection.authenticated = false
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: { message: "Authentication failed" },
+                  timestamp: Date.now(),
+                }),
+              )
+            }
             break
           }
 
@@ -365,7 +401,7 @@ export function createWebSocketServer(port: number = 3001) {
             const roomId = message.payload.roomId
             const userId = connection.userId
 
-            if (!userId) {
+            if (!userId || !connection.authenticated) {
               ws.send(
                 JSON.stringify({
                   type: "error",
@@ -399,7 +435,7 @@ export function createWebSocketServer(port: number = 3001) {
             const leaveRoomId = message.payload.roomId
             const leaveUserId = connection.userId
 
-            if (leaveUserId && rooms.has(leaveRoomId)) {
+            if (leaveUserId && connection.authenticated && rooms.has(leaveRoomId)) {
               rooms.get(leaveRoomId)?.users.delete(clientId)
 
               broadcastToRoom(leaveRoomId, {
@@ -418,7 +454,7 @@ export function createWebSocketServer(port: number = 3001) {
             const msgRoomId = message.payload.roomId
             const msgUserId = connection.userId
 
-            if (!msgUserId) {
+            if (!msgUserId || !connection.authenticated) {
               ws.send(
                 JSON.stringify({
                   type: "error",
@@ -622,7 +658,7 @@ export function createWebSocketServer(port: number = 3001) {
             const readMessageId = message.payload.messageId
             const readUserId = connection.userId
 
-            if (!readUserId) {
+            if (!readUserId || !connection.authenticated) {
               ws.send(
                 JSON.stringify({
                   type: "error",
@@ -652,6 +688,17 @@ export function createWebSocketServer(port: number = 3001) {
           case "typing": {
             const typingRoomId = message.payload.roomId
 
+            if (!connection.authenticated) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: { message: "Not authenticated" },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
             broadcastToRoom(typingRoomId, {
               type: "user_typing",
               payload: {
@@ -667,6 +714,17 @@ export function createWebSocketServer(port: number = 3001) {
           case "stop_typing": {
             const stopTypingRoomId = message.payload.roomId
 
+            if (!connection.authenticated) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: { message: "Not authenticated" },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
             broadcastToRoom(stopTypingRoomId, {
               type: "user_stop_typing",
               payload: {
@@ -681,6 +739,17 @@ export function createWebSocketServer(port: number = 3001) {
           case "wallet_event": {
             const walletAction = message.payload.action
             const walletAddress = message.payload.walletAddress
+
+            if (!connection.authenticated) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: { message: "Not authenticated" },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
 
             broadcastToAll({
               type: walletAction === "connect" ? "wallet_connect" : "wallet_disconnect",
