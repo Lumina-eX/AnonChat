@@ -9,7 +9,25 @@ import {
 import { getRoomTTL } from "@/lib/ephemeral-cleanup"
 import { type NextRequest, NextResponse } from "next/server"
 import { validateMessage, ValidationErrorType } from "@/lib/middleware/message-validation"
-import { insertMessageIdempotent } from "@/lib/messages/idempotency"
+import { insertMessageIdempotent } from "@/lib/messages/idompotency"
+
+/**
+ * Message retention enforcement for read paths.
+ *
+ * The scheduled cleanup service eventually removes expired message rows, but retrieval
+ * APIs must not return expired content even while cleanup is still pending. This
+ * filter is the authoritative guard for the standard message retrieval API.
+ */
+function isMessageExpired(message: { expires_at?: string | null; retention_expires_at?: string | null }, now: number): boolean {
+  const candidates = [message.expires_at, message.retention_expires_at]
+  for (const value of candidates) {
+    if (!value) continue
+    const ts = new Date(value).getTime()
+    if (!Number.isFinite(ts)) continue
+    if (ts <= now) return true
+  }
+  return false
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,6 +40,14 @@ export async function GET(request: NextRequest) {
 
     if (!roomId) {
       return NextResponse.json({ error: "room_id is required" }, { status: 400 })
+    }
+
+    if (!Number.isFinite(limit) || limit <= 0 || limit > 200) {
+      return NextResponse.json({ error: "limit must be between 1 and 200" }, { status: 400 })
+    }
+
+    if (!Number.isFinite(offset) || offset < 0) {
+      return NextResponse.json({ error: "offset must be a non-negative integer" }, { status: 400 })
     }
 
     const {
@@ -50,16 +76,25 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden. You have been removed from this room." }, { status: 403 })
     }
 
+    const now = Date.now()
+
+    // Over-fetch a slightly larger window so that filtering expired rows still
+    // returns the requested page size when possible. Expired messages are never
+    // returned to clients, regardless of cleanup state.
+    const fetchLimit = Math.min(limit * 2 + 10, 500)
+
     const { data, error } = await supabase
       .from("messages")
       .select("*, profiles(display_name, avatar_url)")
       .eq("room_id", roomId)
       .order("created_at", { ascending: false })
-      .range(offset, offset + limit - 1)
+      .range(offset, offset + fetchLimit - 1)
 
     if (error) throw error
 
-    return NextResponse.json({ messages: data })
+    const visible = (data ?? []).filter((message) => !isMessageExpired(message as any, now))
+
+    return NextResponse.json({ messages: visible.slice(0, limit) })
   } catch (error) {
     console.error("[v0] GET /api/messages error:", error)
     return NextResponse.json({ error: "Failed to fetch messages" }, { status: 500 })
@@ -87,6 +122,26 @@ export async function PATCH(request: NextRequest) {
     // Only allow updating to certain statuses
     if (!["sent", "delivered", "read"].includes(status)) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 })
+    }
+
+    // Enforce retention on the write path too: expired messages must not be
+    // mutated or resurrected by standard APIs.
+    const {
+      data: existing,
+      error: fetchErr,
+    } = await supabase
+      .from("messages")
+      .select("id, expires_at, retention_expires_at")
+      .eq("id", id)
+      .maybeSingle()
+
+    if (fetchErr) throw fetchErr
+    if (!existing) {
+      return NextResponse.json({ error: "Message not found" }, { status: 404 })
+    }
+
+    if (isMessageExpired(existing as any, Date.now())) {
+      return NextResponse.json({ error: "Message not found" }, { status: 404 })
     }
 
     // Verify message exists and user has access (implicitly via RLS or explicit check)
@@ -151,12 +206,18 @@ export async function PUT(request: NextRequest) {
 
     const { data: existing, error: fetchErr } = await supabase
       .from("messages")
-      .select("id, user_id, created_at")
+      .select("id, user_id, created_at, expires_at, retention_expires_at")
       .eq("id", id)
       .maybeSingle()
 
     if (fetchErr) throw fetchErr
     if (!existing) {
+      return NextResponse.json({ error: "Message not found" }, { status: 404 })
+    }
+
+    // Expired messages are indistinguishable from deleted messages for standard
+    // API consumers and must not be editable.
+    if (isMessageExpired(existing as any, Date.now())) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 })
     }
 
@@ -196,7 +257,7 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ message: data[0], success: true })
   } catch (error) {
-    console.error("[v0] PUT /api/messages error:", error)
+    console.error("[v0] PUT -api/messages error:", error)
     return NextResponse.json({ error: "Failed to edit message" }, { status: 500 })
   }
 }
@@ -309,43 +370,31 @@ export async function POST(request: NextRequest) {
       user_id: user.id,
       room_id,
       content: sanitizedContent,
-      is_encrypted: false,
-      status: "sent",
+      is_ephemeral,
+      reply_to_id: reply_to_id ?? null,
     }
 
-    if (reply_to_id) {
-      messageData.reply_to_id = reply_to_id
-    }
-
-    // Handle ephemeral messages
+    // Apply ephemeral TTL if requested
     if (is_ephemeral) {
-      const ttl = await getRoomTTL(room_id)
-      messageData.is_ephemeral = true
-      messageData.expires_at = new Date(Date.now() + ttl * 1000).toISOString()
+      const ttlSeconds = await getRoomTTL(supabase, room_id)
+      if (ttlSeconds && ttlSeconds > 0) {
+        messageData.expires_at = new Date(Date.now() + ttlSeconds * 1000).toISOString()
+      }
     }
 
-    // Attach idempotency key when the client provided one
-    if (idempotency_key) {
-      messageData.idempotency_key = idempotency_key
+    // Insert idempotently so retries with the same key do not create duplicates.
+    const inserted = await insertMessageIdempotent(supabase, {
+      idempotencyKey: idempotency_key ?? null,
+      values: messageData,
+    })
+
+    if (!inserted || inserted.error) {
+      throw inserted?.error ?? new Error("Failed to insert message")
     }
 
-    // --- Idempotent insert ---
-    // insertMessageIdempotent performs a pre-check for the key, then inserts.
-    // On a concurrent collision (race condition) it catches the 23505 unique
-    // violation and returns the winning row, so the client always receives a
-    // valid message object regardless of how many retries were made.
-    const { message: savedMessage, isDuplicate, error: insertError } =
-      await insertMessageIdempotent(supabase, messageData as any, "http")
-
-    if (insertError || !savedMessage) {
-      throw new Error(insertError ?? "Insert returned no data")
-    }
-
-    // 200 for duplicate (idempotent replay), 201 for new creation
-    const status = isDuplicate ? 200 : 201
-    return NextResponse.json({ message: savedMessage, success: true, duplicate: isDuplicate }, { status })
+    return NextResponse.json({ message: inserted.message, success: true })
   } catch (error) {
     console.error("[v0] POST /api/messages error:", error)
-    return NextResponse.json({ error: "Failed to create message" }, { status: 500 })
+    return NextResponse.json({ error: "Failed to send message" }, { status: 500 })
   }
 }
