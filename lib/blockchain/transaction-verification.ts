@@ -1,18 +1,20 @@
+// Stellar transaction audit verification service.
 import {
   getTransaction,
   getTransactionExplorerUrl,
+  getTransactionOperations,
 } from "@/lib/blockchain/stellar-service";
 import {
   generateCorrelationId,
   logBlockchainOperation,
 } from "@/lib/blockchain/logger";
+import { loadStellarConfig } from "@/lib/blockchain/stellar-config";
 import type { SupabaseClientLike } from "@/lib/blockchain/stellar-service";
 import type {
   StellarTransaction,
   StellarTransactionVerificationResult,
   StellarTransactionVerificationStatus,
 } from "@/types/blockchain";
-import { upsertTransactionReceipt } from "@/lib/blockchain/transaction-receipts";
 
 export type VerifyStellarTransactionInput = {
   supabase?: SupabaseClientLike;
@@ -20,9 +22,19 @@ export type VerifyStellarTransactionInput = {
   groupActionEventId?: string | null;
   groupId?: string | null;
   expectedMemo?: string | null;
+  expectedOperationType?: string | null;
+  expectedSourceAccount?: string | null;
+  expectedDestinationAccount?: string | null;
+  expectedAsset?: string | null;
+  expectedAmount?: string | null;
+  maxRetries?: number;
+  retryDelayMs?: number;
 };
 
 const STELLAR_TX_HASH_PATTERN = /^[a-fA-F0-9]{64}$/;
+const VERIFICATION_TABLE = "stellar_transaction_verifications";
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_RETRY_DELAY_MS = 250;
 
 function verificationLogContext({
   transactionHash,
@@ -51,12 +63,96 @@ export function classifyTransactionStatus(
   return transaction.successful ? "successful" : "failed";
 }
 
+export type ExpectedOperation = {
+  type?: string | null;
+  sourceAccount?: string | null;
+  destinationAccount?: string | null;
+  asset?: string | null;
+  amount?: string | null;
+};
+
+export type OperationValidationResult = {
+  matched: boolean;
+  error: string | null;
+  details: Record<string, unknown> | null;
+};
+
+export function validateOperationsAgainstExpected(
+  operations: Array<Record<string, unknown>> | null | undefined,
+  expected: ExpectedOperation | null,
+): OperationValidationResult {
+  if (!expected) {
+    return { matched: true, error: null, details: null };
+  }
+
+  const hasExpectation =
+    Boolean(expected.type) ||
+    Boolean(expected.sourceAccount) ||
+    Boolean(expected.destinationAccount) ||
+    Boolean(expected.asset) ||
+    Boolean(expected.amount);
+
+  if (!hasExpectation) {
+    return { matched: true, error: null, details: null };
+  }
+
+  if (!operations || operations.length === 0) {
+    return {
+      matched: false,
+      error: "Transaction has no operations to validate",
+      details: null,
+    };
+  }
+
+  const matchedOperation = operations.find((op) => {
+    if (expected.type) {
+      const opType = String(op.type ?? "").toLowerCase();
+      if (opType !== expected.type.toLowerCase()) return false;
+    }
+    if (expected.sourceAccount) {
+      const source = String(op.source_account ?? op.sourceAccount ?? "");
+      if (source !== expected.sourceAccount) return false;
+    }
+    if (expected.destinationAccount) {
+      const dest = String(
+        op.destination_account ?? op.destinationAccount ?? op.account ?? "",
+      );
+      if (dest !== expected.destinationAccount) return false;
+    }
+    if (expected.asset) {
+      const asset = String(op.asset ?? op.asset_code ?? "");
+      if (asset !== expected.asset) return false;
+    }
+    if (expected.amount) {
+      const amount = String(op.amount ?? "");
+      if (amount !== expected.amount) return false;
+    }
+    return true;
+  });
+
+  if (!matchedOperation) {
+    return {
+      matched: false,
+      error: "Transaction operations do not match the expected group action",
+      details: { expected, operationCount: operations.length },
+    };
+  }
+
+  return {
+    matched: true,
+    error: null,
+    details: { expected, matchedOperation: matchedOperation },
+  };
+}
+
 export function buildVerificationResult({
   transactionHash,
   transaction,
   groupActionEventId = null,
   groupId = null,
   expectedMemo = null,
+  expectedNetwork = null,
+  operationValidation = null,
   now = new Date(),
 }: {
   transactionHash: string;
@@ -64,6 +160,8 @@ export function buildVerificationResult({
   groupActionEventId?: string | null;
   groupId?: string | null;
   expectedMemo?: string | null;
+  expectedNetwork?: "testnet" | "mainnet" | null;
+  operationValidation?: OperationValidationResult | null;
   now?: Date;
 }): StellarTransactionVerificationResult {
   if (!isValidTransactionHash(transactionHash)) {
@@ -73,7 +171,7 @@ export function buildVerificationResult({
       verified: false,
       groupActionEventId,
       groupId,
-      ledger: null,
+      ledge: null,
       memo: null,
       error: "Invalid Stellar transaction hash",
       verifiedAt: now.toISOString(),
@@ -81,15 +179,39 @@ export function buildVerificationResult({
     };
   }
 
+  // Network validation - reject transactions from a different network.
+  if (expectedNetwork && transaction) {
+    const txNetwork = (transaction.network ?? null) as "testnet" | "mainnet" | null;
+    if (txNetwork && txNetwork !== expectedNetwork) {
+      return {
+        transactionHash,
+        status: "failed",
+        verified: false,
+        groupActionEventId,
+        groupId,
+        ledge: transaction.ledge ?? null,
+        memo: transaction.memo ?? null,
+        error: "Transaction was retrieved from a different Stellar network",
+        verifiedAt: now.toISOString(),
+        explorerUrl: getTransactionExplorerUrl(transactionHash),
+      };
+    }
+  }
+
   const status = classifyTransactionStatus(transaction);
   const memoMatches =
     expectedMemo === null ||
     expectedMemo === undefined ||
     transaction?.memo === expectedMemo;
-  const verified = status === "successful" && memoMatches;
+  const operationMatches = operationValidation ? operationValidation.matched : true;
+  const verified = status === "successful" && memoMatches && operationMatches;
   const memoError =
     status === "successful" && !memoMatches
       ? "Transaction memo does not match the expected group action"
+      : null;
+  const operationError =
+    status === "successful" && memoMatches && !operationMatches
+      ? (operationValidation.error ?? "Transaction operations do not match the expected group action")
       : null;
   const statusError =
     status === "failed"
@@ -104,28 +226,158 @@ export function buildVerificationResult({
     verified,
     groupActionEventId,
     groupId,
-    ledger: transaction?.ledger ?? null,
+    ledge: transaction?.ledge ?? null,
     memo: transaction?.memo ?? null,
-    error: memoError ?? statusError,
+    error: memoError ?? operationError ?? statusError,
     verifiedAt: now.toISOString(),
     explorerUrl: getTransactionExplorerUrl(transactionHash),
   };
 }
 
+function isRetryableError(error: unknown): boolean {
+  if (!error) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("timeout") ||
+    lower.includes("network") ||
+    lower.includes("econn") ||
+    lower.includes("fetch") ||
+    lower.includes("rate limit") ||
+    lower.includes("502") ||
+    lower.includes("503") ||
+    lower.includes("504") ||
+    lower.includes("service unavailable")
+  );
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchTransactionWithRetry(
+  transactionHash: string,
+  maxRetries: number,
+  retryDelayMs: number,
+  correlationId: string,
+): Promise<StellarTransaction | null> {
+  let attempt = 0;
+  let lastError: unknown = null;
+
+  while (attempt <= maxRetries) {
+    try {
+      const tx = await getTransaction(transactionHash);
+      return tx ?? null;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxRetries || !isRetryableError(error)) {
+        throw error;
+      }
+      logBlockchainOperation(
+        "warn",
+        "Retryable Horizon transaction retrieval failure",
+        {
+          transactionHash,
+          attempt,
+          maxRetries,
+          error: {
+            type: error instanceof Error ? error.name : "HorizonError",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        },
+        correlationId,
+      );
+      attempt += 1;
+      await sleep(retryDelayMs * attempt);
+    }
+  }
+
+  throw lastError ?? new Error("Unknown Horizon transaction retrieval error");
+}
+
+async function fetchOperationsWithRetry(
+  transactionHash: string,
+  maxRetries: number,
+  retryDelayMs: number,
+  correlationId: string,
+): Promise<Array<Record<string, unknown>> | null> {
+  let attempt = 0;
+  let lastError: unknown = null;
+
+  while (attempt <= maxRetries) {
+    try {
+      const ops = await getTransactionOperations(transactionHash);
+      return ops ?? null;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxRetries || !isRetryableError(error)) {
+        throw error;
+      }
+      logBlockchainOperation(
+        "warn",
+        "Retryable Horizon operations retrieval failure",
+        {
+          transactionHash,
+          attempt,
+          maxRetries,
+          error: {
+            type: error instanceof Error ? error.name : "HorizonError",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        },
+        correlationId,
+      );
+      attempt += 1;
+      await sleep(retryDelayMs * attempt);
+    }
+  }
+
+  throw lastError ?? new Error("Unknown Horizon operations retrieval error");
+}
+
 async function storeVerificationResult(
   supabase: SupabaseClientLike,
   result: StellarTransactionVerificationResult,
+  extra: {
+    network: string | null;
+    ledgeCloseTime: string | null;
+    transactionResult: string | null;
+    validationDetails: Record<string, unknown> | null;
+  },
 ) {
-  const { error } = await supabase.from("stellar_transaction_verifications").insert({
+  // Idempotent write: delete existing row for this tx + action combination, then insert.
+  // This prevents duplicate audit records for repeated verification requests.
+  let deleteQuery = supabase
+    .from(VERIFICATION_TABLE)
+    .delete()
+    .eq("transaction_hash", result.transactionHash);
+
+  if (result.groupActionEventId) {
+    deleteQuery = deleteQuery.eq(
+      "group_action_event_id",
+      result.groupActionEventId,
+    );
+  } else {
+    deleteQuery = deleteQuery.is("group_action_event_id", null);
+  }
+
+  const { error: deleteError } = await deleteQuery;
+  if (deleteError) throw deleteError;
+
+  const { error } = await supabase.from(VERIFICATION_TABLE).insert({
     transaction_hash: result.transactionHash,
     group_action_event_id: result.groupActionEventId,
     group_id: result.groupId,
     status: result.status,
     verified: result.verified,
-    ledger: result.ledger,
+    ledge: result.ledge,
     memo: result.memo,
     error_message: result.error,
     verified_at: result.verifiedAt,
+    network: extra.network,
+    ledger_close_time: extra.ledgeCloseTime,
+    transaction_result: extra.transactionResult,
+    validation_details: extra.validationDetails,
   });
 
   if (error) throw error;
@@ -137,8 +389,17 @@ export async function verifyStellarTransaction({
   groupActionEventId = null,
   groupId = null,
   expectedMemo = null,
+  expectedOperationType = null,
+  expectedSourceAccount = null,
+  expectedDestinationAccount = null,
+  expectedAsset = null,
+  expectedAmount = null,
+  maxRetries = DEFAULT_MAX_RETRIES,
+  retryDelayMs = DEFAULT_RETRY_DELAY_MS,
 }: VerifyStellarTransactionInput): Promise<StellarTransactionVerificationResult> {
   const correlationId = generateCorrelationId();
+  const config = loadStellarConfig();
+  const expectedNetwork = config?.network ?? null;
 
   logBlockchainOperation(
     "info",
@@ -151,37 +412,155 @@ export async function verifyStellarTransaction({
     correlationId,
   );
 
-  const transaction = isValidTransactionHash(transactionHash)
-    ? await getTransaction(transactionHash)
-    : null;
-  const result = buildVerificationResult({
-    transactionHash,
-    transaction,
-    groupActionEventId,
-    groupId,
-    expectedMemo,
-  });
+  if (!isValidTransactionHash(transactionHash)) {
+    const invalidResult = buildVerificationResult({
+      transactionHash,
+      transaction: null,
+      groupActionEventId,
+      groupId,
+      expectedNetwork: expectedNetwork,
+    });
+    logBlockchainOperation(
+      "warn",
+      "Rejected invalid Stellar transaction hash",
+      verificationLogContext({
+        transactionHash,
+        groupActionEventId,
+        groupId,
+      }),
+      correlationId,
+    );
+    return invalidResult;
+  }
 
-  if (supabase) {
-    try {
-      await storeVerificationResult(supabase, result);
-      if (groupActionEventId) {
-        await upsertTransactionReceipt({
-          supabase,
+  let transaction: StellarTransaction | null = null;
+  try {
+    transaction = await fetchTransactionWithRetry(
+      transactionHash,
+      maxRetries,
+      retryDelayMs,
+      correlationId,
+    );
+  } catch (error) {
+    // Horizon outages must not mark transactions as failed.
+    // Return a retryable "pending" outcome instead.
+    const pendingResult: StellarTransactionVerificationResult = {
+      transactionHash,
+      status: "pending",
+      verified: false,
+      groupActionEventId,
+      groupId,
+      ledge: null,
+      memo: null,
+      error: "Temporary Horizon failure retrieving transaction; retry later",
+      verifiedAt: new Date().toISOString(),
+      explorerUrl: getTransactionExplorerUrl(transactionHash),
+    };
+    logBlockchainOperation(
+      "warn",
+      "Horizon transaction retrieval failed; marking verification pending",
+      {
+        ...verificationLogContext({
           transactionHash,
-          operationId: groupActionEventId,
-          status: result.status === "successful" ? "confirmed" : result.status === "failed" ? "failed" : "pending",
-          ledgerSequence: result.ledger,
-          blockTimestamp: transaction?.created_at ?? null,
-          confirmedAt: result.status === "successful" ? result.verifiedAt : null,
-          errorMessage: result.error,
-          metadata: { group_id: groupId, memo: result.memo },
+          groupActionEventId,
+          groupId,
+        }),
+        error: {
+          type: error instanceof Error ? error.name : "HorizonError",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      },
+      correlationId,
+    );
+    if (supabase) {
+      try {
+        await storeVerificationResult(supabase, pendingResult, {
+          network: expectedNetwork,
+          ledgeCloseTime: null,
+          transactionResult: null,
+          validationDetails: null,
         });
+      } catch (storeError) {
+        logBlockchainOperation(
+          "error",
+          "Failed to persist pending verification result",
+          {
+            ...verificationLogContext({
+              transactionHash,
+              groupActionEventId,
+              groupId,
+            }),
+            error: {
+              type: storeError instanceof Error ? storeError.name : "StoreError",
+              message:
+                storeError instanceof Error
+                  ? storeError.message
+                  : String(storeError),
+            },
+          },
+          correlationId,
+        );
       }
+    }
+    return pendingResult;
+  }
+
+  // Transaction not found on Horizon.
+  if (!transaction) {
+    const pendingResult = buildVerificationResult({
+      transactionHash,
+      transaction: null,
+      groupActionEventId,
+      groupId,
+      expectedMemo,
+      expectedNetwork,
+    });
+    if (supabase) {
+      await storeVerificationResult(supabase, pendingResult, {
+        network: expectedNetwork,
+        ledgeCloseTime: null,
+        transactionResult: null,
+        validationDetails: null,
+      });
+    }
+    return pendingResult;
+  }
+
+  // Only fetch operations when the transaction succeeded; failed tx operations
+  // are not relevant for matching.
+  let operations: Array<Record<string, unknown>> | null = null;
+  const hasExpectedOperation =
+    Boolean(expectedOperationType) ||
+    Boolean(expectedSourceAccount) ||
+    Boolean(expectedDestinationAccount) ||
+    Boolean(expectedAsset) ||
+    Boolean(expectedAmount);
+
+  if (transaction.successful && hasExpectedOperation) {
+    try {
+      operations = await fetchOperationsWithRetry(
+        transactionHash,
+        maxRetries,
+        retryDelayMs,
+        correlationId,
+      );
     } catch (error) {
+      const pendingResult: StellarTransactionVerificationResult = {
+        transactionHash,
+        status: "pending",
+        verified: false,
+        groupActionEventId,
+        groupId,
+        ledge: transaction.ledge ?? null,
+        memo: transaction.memo ?? null,
+        error:
+          "Temporary Horizon failure retrieving transaction operations; retry later",
+        verifiedAt: new Date().toISOString(),
+        explorerUrl: getTransactionExplorerUrl(transactionHash),
+      };
       logBlockchainOperation(
-        "error",
-        "Failed to store Stellar transaction verification result",
+        "warn",
+        "Horizon operations retrieval failed; marking verification pending",
         {
           ...verificationLogContext({
             transactionHash,
@@ -189,20 +568,76 @@ export async function verifyStellarTransaction({
             groupId,
           }),
           error: {
-            type: error instanceof Error ? error.name : "DatabaseError",
-            message: error instanceof Error ? error.message : "Unknown database error",
+            type: error instanceof Error ? error.name : "HorizonError",
+            message: error instanceof Error ? error.message : String(error),
           },
         },
         correlationId,
       );
-      throw error;
+      if (supabase) {
+        try {
+          await storeVerificationResult(supabase, pendingResult, {
+            network: expectedNetwork,
+            ledgeCloseTime: null,
+            transactionResult: null,
+            validationDetails: null,
+          });
+        } catch (storeError) {
+          logBlockchainOperation(
+            "error",
+            "Failed to persist pending verification result",
+            {
+              ...verificationLogContext({
+                transactionHash,
+                groupActionEventId,
+                groupId,
+              }),
+              error: {
+                type: storeError instanceof Error ? storeError.name : "StoreError",
+                message:
+                  storeError instanceof Error
+                    ? storeError.message
+                    : String(storeError),
+              },
+            },
+            correlationId,
+          );
+        }
+      }
+      return pendingResult;
     }
   }
 
-  const logLevel = result.verified ? "info" : "warn";
+  const operationValidation = validateOperationsAgainstExpected(operations, {
+    type: expectedOperationType,
+    sourceAccount: expectedSourceAccount,
+    destinationAccount: expectedDestinationAccount,
+    asset: expectedAsset,
+    amount: expectedAmount,
+  });
+
+  const result = buildVerificationResult({
+    transactionHash,
+    transaction,
+    groupActionEventId,
+    groupId,
+    expectedMemo,
+    expectedNetwork,
+    operationValidation,
+  });
+
+  if (supabase) {
+    await storeVerificationResult(supabase, result, {
+      network: (transaction.network ?? expectedNetwork) as string | null,
+      ledgeCloseTime: transaction.ledgerCloseTime ?? null,
+      transactionResult: transaction.result ?? null,
+      validationDetails: operationValidation.details,
+    });
+  }
+
   logBlockchainOperation(
-    logLevel,
-    "Completed Stellar transaction verification",
+    result.verified ? "info" : "warn",
+    "Stellar transaction verification completed",
     {
       ...verificationLogContext({
         transactionHash,
@@ -211,7 +646,8 @@ export async function verifyStellarTransaction({
       }),
       status: result.status,
       verified: result.verified,
-      verificationError: result.error,
+      ledge: result.ledge,
+      error: result.error,
     },
     correlationId,
   );

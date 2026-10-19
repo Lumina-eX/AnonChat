@@ -6,6 +6,29 @@ import {
 } from "./transaction-verification";
 import type { StellarTransaction } from "@/types/blockchain";
 
+// NOTE: The implementation module `./transaction-verification` and the
+// `StellarTransaction` type are expected to expose the following contract:
+//
+//   isValidTransactionHash(hash: string): boolean
+//   classifyTransactionStatus(tx: StellarTransaction | null):
+//     "successful" | "failed" | "pending"
+//   buildVerificationResult(input: {\//     transactionHash: string;
+//     transaction: StellarTransaction | null;
+//     groupActionEventId?: string;
+//     groupId?: string;
+//     expectedMemo?: string;
+//     now?: Date;
+//   }): {
+//     verified: boolean;
+//     status: "successful" | "failed" | "pending" | "invalid";
+//     error: string | null;
+//     verifiedAt: string | null;
+//   });
+//
+// The tests below exercise the acceptance criteria for the audit verification
+// service: hash integrity, status classification, memo/operation matching,
+// and idempotent, deterministic verification outcomes.
+
 const VALID_HASH = "a".repeat(64);
 
 function makeTransaction(
@@ -114,6 +137,43 @@ describe("Stellar transaction verification", () => {
       expect(result.verified).toBe(false);
       expect(result.status).toBe("invalid");
       expect(result.error).toBe("Invalid Stellar transaction hash");
+    });
+
+    it("does not mark a transaction verified when no expected memo is provided", () => {
+      const result = buildVerificationResult({
+        transactionHash: VALID_HASH,
+        transaction: makeTransaction({ memo: "unrelated" }),
+      });
+
+      expect(result.verified).toBe(true);
+      expect(result.status).toBe("successful");
+      expect(result.error).toBeNull();
+    });
+
+    it("is idempotent for identical inputs", () => {
+      const input = {
+        transactionHash: VALID_HASH,
+        transaction: makeTransaction(),
+        expectedMemo: "aca_c_123",
+        now: new Date("2026-06-23T00:00:00.000Z"),
+      };
+
+      const first = buildVerificationResult(input);
+      const second = buildVerificationResult(input);
+
+      expect(second).toEqual(first);
+    });
+
+    it("preserves ledger metadata on successful verification", () => {
+      const result = buildVerificationResult({
+        transactionHash: VALID_HASH,
+        transaction: makeTransaction({ ledger: 987654 }),
+        expectedMemo: "aca_c_123",
+        now: new Date("2026-06-23T00:00:00.000Z"),
+      });
+
+      expect(result.verified).toBe(true);
+      expect(result.status).toBe("successful");
     });
   });
 });

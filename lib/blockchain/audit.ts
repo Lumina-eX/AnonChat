@@ -155,14 +155,25 @@ export async function recordGroupAuditEvent({
       expectedMemo: result.auditMemo ?? null,
     });
 
-    if (!verification.verified) {
+    const auditVerification = await verifyTransactionAudit({
+      supabase,
+      transactionHash: result.transactionHash,
+      groupActionEventId: eventId,
+      groupId,
+      expectedMemo: result.auditMemo ?? null,
+      expectedAction: eventType,
+    });
+
+    if (!verification.verified || !auditVerification.verified) {
       logBlockchainOperation("warn", "Rejecting group audit event after failed transaction verification", {
         groupId,
         eventId,
         eventType,
         transactionHash: result.transactionHash,
-        status: verification.status,
-        error: verification.error ? { type: "VerificationError", message: verification.error } : undefined,
+        status: auditVerification.status ?? verification.status,
+        error: (auditVerification.error ?? verification.error)
+          ? { type: "VerificationError", message: auditVerification.error ?? verification.error }
+          : undefined,
       }, correlationId);
 
       await supabase
@@ -172,7 +183,7 @@ export async function recordGroupAuditEvent({
           transaction_hash: result.transactionHash,
           stellar_memo: result.auditMemo ?? null,
           submitted_at: new Date().toISOString(),
-          error_message: verification.error ?? "Stellar transaction verification failed",
+          error_message: auditVerification.error ?? verification.error ?? "Stellar transaction verification failed",
         })
         .eq("event_id", eventId);
 
@@ -182,7 +193,7 @@ export async function recordGroupAuditEvent({
         transactionHash: result.transactionHash,
         status: "failed",
         explorerUrl: getAuditExplorerUrl(result.transactionHash),
-        error: verification.error ?? "Stellar transaction verification failed",
+        error: auditVerification.error ?? verification.error ?? "Stellar transaction verification failed",
       };
     }
 
