@@ -15,7 +15,9 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   try {
     const body = await req.json()
     if (typeof body?.message === 'string') message = body.message.slice(0, 500)
-  } catch {}
+  } catch {
+    // Body is optional; ignore empty or invalid JSON and continue without a message
+  }
 
   const db = createAdminClient()
   const { data, error } = await db.rpc('create_join_request', {
