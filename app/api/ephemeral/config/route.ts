@@ -1,14 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { logger } from "@/lib/logger";
-import {
-  getRoomTTL,
-  getGlobalTTL,
-  cleanupExpiredMessages,
-  getCleanupLogs,
-  getCleanupStats,
-} from "@/lib/ephemeral-cleanup";
 import { EPHEMERAL_CONFIG } from "@/lib/ephemeral-config";
+import { canManageEphemeralConfig } from "@/lib/authorization/group-permissions";
 
 /**
  * GET /api/ephemeral/config - Get ephemeral message configuration
@@ -34,17 +28,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Check if user is admin (or room creator for room-specific config)
+    // Room-specific config requires ephemeral-config management permission
     if (roomId) {
-      const { data: room } = await supabase
-        .from("rooms")
-        .select("created_by")
-        .eq("id", roomId)
-        .maybeSingle();
-
-      if (!room || room.created_by !== user.id) {
+      const allowed = await canManageEphemeralConfig(supabase, roomId, user.id);
+      if (!allowed) {
         return NextResponse.json(
-          { error: "Forbidden - only room creator can view config" },
+          { error: "Forbidden - insufficient permissions to view config" },
           { status: 403 }
         );
       }
@@ -176,16 +165,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if user is room creator
-    const { data: room } = await supabase
-      .from("rooms")
-      .select("created_by")
-      .eq("id", room_id)
-      .maybeSingle();
-
-    if (!room || room.created_by !== user.id) {
+    const allowed = await canManageEphemeralConfig(supabase, room_id, user.id);
+    if (!allowed) {
       return NextResponse.json(
-        { error: "Forbidden - only room creator can update config" },
+        { error: "Forbidden - insufficient permissions to update config" },
         { status: 403 }
       );
     }

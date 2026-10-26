@@ -235,14 +235,13 @@ export async function POST(
       }
 
       // Resolve user ID for the new wallet
-      const newOwnerEmail = `${newOwnerWallet.toLowerCase()}@wallet.anonchat.local`;
       const { data: newOwnerUser } = await supabase
         .from("profiles")
         .select("id")
         .eq("wallet_address", newOwnerWallet)
         .maybeSingle();
 
-      // Fallback: look up via deterministic email pattern
+      // Fallback: case-insensitive wallet lookup
       let newOwnerId: string | null = newOwnerUser?.id ?? null;
       if (!newOwnerId) {
         const { data: authUser } = await supabase
