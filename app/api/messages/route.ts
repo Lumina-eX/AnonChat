@@ -335,7 +335,7 @@ export async function POST(request: NextRequest) {
     // violation and returns the winning row, so the client always receives a
     // valid message object regardless of how many retries were made.
     const { message: savedMessage, isDuplicate, error: insertError } =
-      await insertMessageIdempotent(supabase, messageData as any, "http")
+      await insertMessageIdempotent(supabase, messageData as Parameters<typeof insertMessageIdempotent>[1], "http")
 
     if (insertError || !savedMessage) {
       throw new Error(insertError ?? "Insert returned no data")

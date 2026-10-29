@@ -48,13 +48,14 @@ export interface ValidationError {
  * // returns [{ field: 'signature', message: 'signature is required' }]
  */
 export function validateRequiredFields(
-  body: Record<string, any>,
+  body: Record<string, unknown>,
   requiredFields: string[]
 ): ValidationError[] {
   const errors: ValidationError[] = [];
   
   for (const field of requiredFields) {
-    if (!body[field] || typeof body[field] !== 'string' || body[field].trim() === '') {
+    const value = body[field];
+    if (!value || typeof value !== 'string' || value.trim() === '') {
       errors.push({
         field,
         message: `${field} is required`

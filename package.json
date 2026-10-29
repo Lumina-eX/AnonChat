@@ -6,8 +6,8 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "build": "next build --webpack",
-    "dev": "next dev",
+    "build": "node api.js && next build --webpack",
+    "dev": "node api.js && next dev",
     "dev:ws": "node scripts/start-ws-server.js",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:ws\"",
     "dev:cleanup": "node scripts/ephemeral-cleanup-worker.js",
@@ -20,7 +20,7 @@
     "test:ephemeral": "node scripts/test-ephemeral-cleanup.mjs",
     "test:stellar-history": "node --test scripts/test-stellar-history.mjs",
     "test:group-pagination": "node --test scripts/test-group-members-pagination.mjs",
-    "start": "next start",
+    "start": "node api.js && next start",
     "cleanup:worker": "node scripts/ephemeral-cleanup-worker.js",
     "cleanup:trigger": "node scripts/trigger-cleanup.mjs",
     "test:group-stats": "vitest run tests/group-message-statistics.test.ts"

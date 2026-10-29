@@ -83,12 +83,13 @@ export function validateAttachmentMetadata(
   body: CreateAttachmentMetadataBody,
   maxBytes: number = DEFAULT_MAX_FILE_BYTES
 ): CreateAttachmentMetadataBody {
-  const original_filename = sanitizeFilename(body.original_filename)
-  assertSupportedMimeType(body.mime_type)
-  if (body.size_bytes > maxBytes) {
+  const parsed = createAttachmentMetadataBodySchema.parse(body)
+  const original_filename = sanitizeFilename(parsed.original_filename)
+  assertSupportedMimeType(parsed.mime_type)
+  if (parsed.size_bytes > maxBytes) {
     throw new Error(`size_bytes exceeds limit (${maxBytes})`)
   }
-  return { ...body, original_filename }
+  return { ...parsed, original_filename }
 }
 
 export const registerFileReferenceBodySchema = z.object({
