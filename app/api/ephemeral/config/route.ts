@@ -10,6 +10,25 @@ import {
 } from "@/lib/ephemeral-cleanup";
 import { EPHEMERAL_CONFIG } from "@/lib/ephemeral-config";
 
+type EphemeralConfigResult = {
+  room?: Record<string, unknown> | null;
+  global?: Record<string, unknown>;
+  constants?: {
+    DEFAULT_TTL_SECONDS: number;
+    MIN_TTL_SECONDS: number;
+    MAX_TTL_SECONDS: number;
+  };
+};
+
+type LoggableError = Record<string, unknown>;
+
+function toLoggable(error: unknown): LoggableError {
+  if (error !== null && typeof error === "object") {
+    return error as LoggableError;
+  }
+  return { value: String(error) };
+}
+
 /**
  * GET /api/ephemeral/config - Get ephemeral message configuration
  * Query params:
@@ -50,7 +69,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const result: any = {};
+    const result: EphemeralConfigResult = {};
 
     // Get room-specific config
     if ((type === "both" || type === "room") && roomId) {
@@ -61,10 +80,7 @@ export async function GET(request: NextRequest) {
         .maybeSingle();
 
       if (roomError) {
-        logger.error(
-          "Error fetching room config:",
-          roomError as unknown as Record<string, unknown>
-        );
+        logger.error("Error fetching room config:", toLoggable(roomError));
       }
 
       result.room = roomConfig || null;
@@ -79,10 +95,7 @@ export async function GET(request: NextRequest) {
         .maybeSingle();
 
       if (globalError) {
-        logger.error(
-          "Error fetching global config:",
-          globalError as unknown as Record<string, unknown>
-        );
+        logger.error("Error fetching global config:", toLoggable(globalError));
       }
 
       result.global = globalConfig || {
@@ -98,7 +111,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
-    logger.error("Error in GET /api/ephemeral/config:", error as unknown as Record<string, unknown>);
+    logger.error("Error in GET /api/ephemeral/config:", toLoggable(error));
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
@@ -128,8 +141,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
-    const { room_id, ttl_seconds, enabled = true, is_global } = body;
+    const rawBody: unknown = await request.json();
+    const body: Record<string, unknown> =
+      rawBody !== null && typeof rawBody === "object"
+        ? (rawBody as Record<string, unknown>)
+        : {};
+    const room_id = typeof body.room_id === "string" ? body.room_id : undefined;
+    const ttl_seconds =
+      typeof body.ttl_seconds === "number" ? body.ttl_seconds : undefined;
+    const enabled = typeof body.enabled === "boolean" ? body.enabled : true;
+    const is_global = body.is_global === true;
 
     // Validate TTL
     if (!ttl_seconds || ttl_seconds < EPHEMERAL_CONFIG.MIN_TTL_SECONDS ||
@@ -155,10 +176,7 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (error) {
-        logger.error(
-          "Error updating global config:",
-          error as unknown as Record<string, unknown>
-        );
+        logger.error("Error updating global config:", toLoggable(error));
         throw error;
       }
 
@@ -206,20 +224,14 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) {
-      logger.error(
-        "Error updating room config:",
-        error as unknown as Record<string, unknown>
-      );
+      logger.error("Error updating room config:", toLoggable(error));
       throw error;
     }
 
     logger.info(`Room ephemeral config updated:`, { room_id, ttl_seconds });
     return NextResponse.json(data);
   } catch (error) {
-    logger.error(
-      "Error in POST /api/ephemeral/config:",
-      error as unknown as Record<string, unknown>
-    );
+    logger.error("Error in POST /api/ephemeral/config:", toLoggable(error));
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

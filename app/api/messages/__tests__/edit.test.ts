@@ -4,9 +4,9 @@ function makeUrl(query: Record<string, string>) {
   return `http://localhost/api/messages?${new URLSearchParams(query).toString()}`;
 }
 
-function jsonRequest(body: unknown): NextRequest {
+function jsonRequest(_body: unknown): NextRequest {
   const request = new NextRequest(makeUrl({}), { method: "PUT" });
-  return request as NextRequest;
+  return request;
 }
 
 describe("PUT /api/messages edit endpoint validation", () => {
