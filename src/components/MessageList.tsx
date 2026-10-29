@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Message } from '../types/message';
 import { MessageItem } from '@/components/MessageItem';
+import { ForwardMessageModal } from '@/components/ForwardMessageModal';
 
 interface Props {
   messages: Message[];
@@ -12,6 +13,9 @@ interface Props {
   onReply?: (message: Message) => void;
   onJumpToMessage?: (messageId: string) => void;
   onRetry?: (messageId: string) => void;
+  currentRoomId?: string;
+  onForwardSuccess?: (targetRoomId: string) => void;
+  onForwardError?: (message: string) => void;
 }
 
 export const MessageList: React.FC<Props> = ({
@@ -24,6 +28,9 @@ export const MessageList: React.FC<Props> = ({
   onReply,
   onJumpToMessage,
   onRetry,
+  currentRoomId,
+  onForwardSuccess,
+  onForwardError,
 }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -31,6 +38,7 @@ export const MessageList: React.FC<Props> = ({
   const [shouldScrollToBottom, setShouldScrollToBottom] = useState(true);
   const loadMoreObserverRef = useRef<IntersectionObserver | null>(null);
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
+  const [forwardTarget, setForwardTarget] = useState<Message | null>(null);
 
   // Setup IntersectionObserver for load-more trigger
   useEffect(() => {
@@ -90,60 +98,78 @@ export const MessageList: React.FC<Props> = ({
     setShouldScrollToBottom(isNearBottom);
   }, []);
 
+  const handleForward = useCallback((msg: Message) => {
+    setForwardTarget(msg);
+  }, []);
+
   return (
-    <div
-      ref={scrollContainerRef}
-      className='flex-1 overflow-y-auto px-4 py-2 space-y-1'
-      onScroll={handleScroll}
-    >
-      {/* Sentinel element for IntersectionObserver to trigger load more */}
-      <div ref={loadMoreSentinelRef} className='h-1' />
+    <>
+      <div
+        ref={scrollContainerRef}
+        className='flex-1 overflow-y-auto px-4 py-2 space-y-1'
+        onScroll={handleScroll}
+      >
+        {/* Sentinel element for IntersectionObserver to trigger load more */}
+        <div ref={loadMoreSentinelRef} className='h-1' />
 
-      {/* Loading indicator at top */}
-      {isLoadingMore && (
-        <div className='flex justify-center py-2'>
-          <div className='animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500'></div>
-        </div>
-      )}
+        {/* Loading indicator at top */}
+        {isLoadingMore && (
+          <div className='flex justify-center py-2'>
+            <div className='animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500'></div>
+          </div>
+        )}
 
-      {/* Show message if no more messages to load */}
-      {!hasMore && messages.length > 0 && (
-        <p className='text-center text-gray-500 text-xs py-2'>
-          Beginning of conversation
-        </p>
-      )}
+        {/* Show message if no more messages to load */}
+        {!hasMore && messages.length > 0 && (
+          <p className='text-center text-gray-500 text-xs py-2'>
+            Beginning of conversation
+          </p>
+        )}
 
-      {/* Empty state */}
-      {messages.length === 0 && !isLoading && (
-        <p className='text-center text-gray-600 text-sm mt-10'>
-          No messages yet. Start the conversation!
-        </p>
-      )}
+        {/* Empty state */}
+        {messages.length === 0 && !isLoading && (
+          <p className='text-center text-gray-600 text-sm mt-10'>
+            No messages yet. Start the conversation!
+          </p>
+        )}
 
-      {/* Loading state */}
-      {isLoading && (
-        <div className='flex justify-center py-8'>
-          <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500'></div>
-        </div>
-      )}
-      
-      {/* Message list */}
-      {messages.map((msg, index) => (
-        <div
-          key={msg.id}
-          ref={index === 0 ? firstMessageRef : undefined}
-          data-message-id={msg.id}
-        >
-          <MessageItem
-            message={msg}
-            onReply={onReply}
-            onJumpToMessage={onJumpToMessage}
-            onRetry={onRetry}
-          />
-        </div>
-      ))}
-      
-      <div ref={bottomRef} />
-    </div>
+        {/* Loading state */}
+        {isLoading && (
+          <div className='flex justify-center py-8'>
+            <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500'></div>
+          </div>
+        )}
+        
+        {/* Message list */}
+        {messages.map((msg, index) => (
+          <div
+            key={msg.id}
+            ref={index === 0 ? firstMessageRef : undefined}
+            data-message-id={msg.id}
+          >
+            <MessageItem
+              message={msg}
+              onReply={onReply}
+              onJumpToMessage={onJumpToMessage}
+              onRetry={onRetry}
+              onForward={handleForward}
+            />
+          </div>
+        ))}
+        
+        <div ref={bottomRef} />
+      </div>
+
+      <ForwardMessageModal
+        open={forwardTarget !== null}
+        message={forwardTarget}
+        currentRoomId={currentRoomId}
+        onClose={() => setForwardTarget(null)}
+        onSuccess={(targetRoomId) => {
+          onForwardSuccess?.(targetRoomId);
+        }}
+        onError={(msg) => onForwardError?.(msg)}
+      />
+    </>
   );
 };

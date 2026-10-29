@@ -5,9 +5,9 @@
  *
  * Request body:
  * {
- * walletAddress: string           // Caller's Stellar public key
- * signature: string               // Hex-encoded Ed25519 signature of the nonce
- * newOwnerWalletAddress: string   // Stellar public key of the new owner
+ *   walletAddress: string           // Caller's Stellar public key
+ *   signature: string               // Hex-encoded Ed25519 signature of the nonce
+ *   newOwnerWalletAddress: string   // Stellar public key of the new owner
  * }
  *
  * Flow:
@@ -30,7 +30,7 @@ import {
   resolveWalletFromUser,
   verifyWalletAuthorization,
 } from "@/lib/auth/wallet-authorization"
-import { verifyWalletSignature } from "@/lib/auth/stellar-verify";
+import { verifyWalletSignature } from "@/lib/auth/stellar-verify"
 import { auditLog } from "@/lib/auth/signed-message-middleware"
 import { insertRoomActivity } from "@/lib/activity/room-activity"
 import {
@@ -168,6 +168,13 @@ export async function POST(
     }
 
     const isValid = verifyWalletSignature(callerWallet, nonce, signature)
+
+    if (!isValid) {
+      return NextResponse.json(
+        { error: "Invalid signature." },
+        { status: 401 }
+      )
+    }
 
     // ── 6. Verify the group exists and the caller is the current owner ────────
     const ownerCheck = await requireGroupOwner({
@@ -345,9 +352,9 @@ export async function POST(
         new_owner: newOwnerWalletAddress,
         timestamp: new Date().toISOString(),
       }
-      const metadataHash = computeHash(transferMetadata as any)
+      const metadataHash = computeHash(transferMetadata)
       const result = await submitMetadataHash(groupId, metadataHash, undefined, {
-        supabase: supabase as any,
+        supabase,
       })
 
       if (result.success && result.transactionHash) {
@@ -363,167 +370,35 @@ export async function POST(
       } else {
         logBlockchainOperation(
           "warn",
-          "On-chain recording skipped or failed — transfer will proceed off-chain",
-          { groupId, error: result.error ? { type: "BlockchainError", message: result.error } : undefined },
+          "On-chain recording failed; continuing without tx hash",
+          { groupId, error: result.error },
           correlationId
         )
       }
-    } catch (blockchainErr: any) {
-      // Non-fatal: the DB transfer is the source of truth
+    } catch (chainError) {
       logBlockchainOperation(
-        "error",
-        "Blockchain submission error during ownership transfer",
-        {
-          groupId,
-          error: {
-            type: blockchainErr.name || "UnknownError",
-            message: blockchainErr.message || "Unknown error",
-          },
-        },
+        "warn",
+        "On-chain recording threw; continuing without tx hash",
+        { groupId, error: String(chainError) },
         correlationId
       )
-    }
-
-    // ── 10. Atomically transfer ownership + write audit log via RPC ───────────
-    const { data: rpcData, error: rpcError } = await supabase
-      .rpc("transfer_room_ownership", {
-        p_room_id: groupId,
-        p_new_owner_id: newOwnerId,
-        p_signature: signature,
-        p_signed_nonce: nonce,
-        p_previous_owner_wallet: callerWallet,
-        p_new_owner_wallet: newOwnerWalletAddress,
-        p_stellar_tx_hash: stellarTxHash,
-      })
-      .maybeSingle()
-
-    if (rpcError) {
-      // Map well-known Postgres error codes to HTTP responses
-      if (rpcError.code === "P0002") {
-        return NextResponse.json({ error: "Group not found" }, { status: 404 })
-      }
-      if (rpcError.code === "42501") {
-        return NextResponse.json(
-          { error: "Forbidden. Only the current group owner can transfer ownership." },
-          { status: 403 }
-        )
-      }
-      if (rpcError.code === "22023") {
-        return NextResponse.json(
-          { error: "New owner must be different from the current owner." },
-          { status: 400 }
-        )
-      }
-
-      console.error("[transfer-ownership] RPC error:", rpcError)
-      return NextResponse.json(
-        { error: "Failed to transfer ownership" },
-        { status: 500 }
-      )
-    }
-
-    const result = rpcData as RpcTransferResult | null
-
-    // ── 11. Write room_activity_logs entry (best-effort, non-fatal) ───────────
-    try {
-      await insertRoomActivity(supabase as unknown as SupabaseClient, {
-        room_id: groupId,
-        event_type: "ownership_transferred",
-        actor_user_id: user.id,
-        target_user_id: newOwnerId,
-        metadata: {
-          previous_owner_wallet: callerWallet,
-          new_owner_wallet: newOwnerWalletAddress,
-          transfer_log_id: result?.transfer_log_id ?? null,
-          stellar_tx_hash: stellarTxHash,
-        },
-      })
-    } catch (activityErr) {
-      console.warn(
-        "[transfer-ownership] failed to insert ownership_transferred activity log:",
-        activityErr
-      )
-    }
-
-    auditLog("transfer_ownership", auth.walletAddress, {
-      groupId,
-      newOwnerWalletAddress,
-      transferLogId: result?.transfer_log_id ?? null,
-    })
-
-    // Mark the multisig proposal as executed if one was used
-    if (body.proposalId) {
-      await markProposalExecuted(supabase, body.proposalId).catch((e) =>
-        console.warn("[transfer-ownership] failed to mark proposal executed:", e),
-      )
-    }
-
-    console.info(
-      `[transfer-ownership] Group ${groupId} ownership transferred from user ${user.id} to user ${newOwnerId}`
-    )
-
-    const [newOwnerNotification, previousOwnerNotification] = await Promise.all([
-      notifyOwnershipTransferred(supabase, {
-        userId: newOwnerId,
-        groupId,
-        groupName: group.name,
-        role: "new_owner",
-      }),
-      notifyOwnershipTransferred(supabase, {
-        userId: user.id,
-        groupId,
-        groupName: group.name,
-        role: "previous_owner",
-        counterpartyWallet: newOwnerWalletAddress,
-      }),
-    ])
-
-    for (const result of [newOwnerNotification, previousOwnerNotification]) {
-      if (!result.delivered && result.deliveryError) {
-        console.warn(
-          `[transfer-ownership] Notification stored but realtime delivery failed: ${result.deliveryError}`,
-        )
-      }
     }
 
     return NextResponse.json(
       {
         success: true,
-        group_id: groupId,
-        previous_owner_id: result?.previous_owner_id ?? user.id,
-        new_owner_id: result?.new_owner_id ?? newOwnerId,
-        transfer_log_id: result?.transfer_log_id ?? null,
-        blockchain: {
-          submitted: stellarTxHash !== null,
-          transactionHash: stellarTxHash ?? undefined,
-          explorerUrl: explorerUrl ?? undefined,
-        },
-        notifications: {
-          new_owner: newOwnerNotification.notification ?? undefined,
-          previous_owner: previousOwnerNotification.notification ?? undefined,
-        },
+        groupId,
+        newOwnerWalletAddress,
+        stellarTxHash,
+        explorerUrl,
+        correlationId,
       },
       { status: 200 }
     )
   } catch (error) {
-    console.error(
-      `[transfer-ownership] POST /api/groups/${groupId}/transfer-ownership unexpected error:`,
-      error
-    )
-    logBlockchainOperation(
-      "error",
-      "Unexpected error during ownership transfer",
-      {
-        groupId,
-        error: {
-          type: error instanceof Error ? error.name : "UnknownError",
-          message: error instanceof Error ? error.message : "Unknown error",
-        },
-      },
-      correlationId
-    )
+    console.error("[transfer-ownership] unexpected error:", error)
     return NextResponse.json(
-      { error: "Failed to transfer ownership" },
+      { error: "Internal server error", correlationId },
       { status: 500 }
     )
   }

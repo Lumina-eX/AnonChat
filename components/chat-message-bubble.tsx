@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { cn } from "@/lib/utils";
 import { highlightText } from "@/lib/highlight-text";
-import { Pin, Reply } from "lucide-react";
+import { Pin, Reply, Forward } from "lucide-react";
 
 export type Reaction = {
   emoji: string;
@@ -25,6 +25,7 @@ export type ChatMessage = {
   reactions?: Reaction[];
   replyTo?: ReplyToInfo | null;
   senderName?: string;
+  isForwarded?: boolean;
 };
 
 interface ChatMessageBubbleProps {
@@ -38,6 +39,7 @@ interface ChatMessageBubbleProps {
   onReact?: (messageId: string, emoji: string) => void;
   onReply?: (message: ChatMessage) => void;
   onJumpToMessage?: (messageId: string) => void;
+  onForward?: (message: ChatMessage) => void;
 }
 
 // A lightweight set of emojis for quick reactions
@@ -54,6 +56,7 @@ export function ChatMessageBubble({
   onReact,
   onReply,
   onJumpToMessage,
+  onForward,
 }: ChatMessageBubbleProps) {
   const isMe = message.author === "me";
   const [showPicker, setShowPicker] = useState(false);
@@ -105,6 +108,22 @@ export function ChatMessageBubble({
             </button>
           </>
         )}
+
+        {onForward && (
+          <>
+            <div className="h-4 w-px bg-border/80 mx-0.5" />
+            <button
+              type="button"
+              onClick={() => onForward(message)}
+              className="p-1 px-1.5 hover:bg-muted rounded-full text-xs text-muted-foreground hover:text-foreground transition-all flex items-center gap-1"
+              title="Forward message"
+              aria-label="Forward message"
+            >
+              <Forward className="h-3.5 w-3.5" />
+              <span className="text-[11px] font-medium hidden sm:inline">Forward</span>
+            </button>
+          </>
+        )}
       </div>
 
       {/* Message Bubble */}
@@ -122,6 +141,13 @@ export function ChatMessageBubble({
           <div className="flex items-center gap-1 text-[10px] font-semibold mb-1 opacity-90 text-primary">
             <Pin className="h-3 w-3 rotate-45" />
             <span>Pinned</span>
+          </div>
+        )}
+
+        {message.isForwarded && (
+          <div className="flex items-center gap-1 text-[10px] font-semibold mb-1 opacity-90">
+            <Forward className="h-3 w-3" />
+            <span>Forwarded</span>
           </div>
         )}
 

@@ -7,6 +7,12 @@ export interface ReplyToInfo {
   isDeleted?: boolean;
 }
 
+export interface ForwardedFromInfo {
+  id: string;
+  sender?: string;
+  roomId?: string;
+}
+
 export interface Message {
   id: string;
   text: string;
@@ -15,8 +21,14 @@ export interface Message {
   isOwn: boolean;
   isEncrypted: boolean;
   editedAt?: Date;
-  replyTo?: ReplyToInfo | null;
+  replyTo: ReplyToInfo | null;
   status?: MessageStatus;
   tempId?: string;
+  isDeleted?: boolean;
+  forwardedFrom?: ForwardedFromInfo | null;
 }
 
+export interface GroupSummary {
+  id: string;
+  name: string;
+}

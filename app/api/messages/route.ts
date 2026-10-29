@@ -196,7 +196,7 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ message: data[0], success: true })
   } catch (error) {
-    console.error("[v0] PUT /api/messages error:", error)
+    console.error("[v0] PUT -api/messages error:", error)
     return NextResponse.json({ error: "Failed to edit message" }, { status: 500 })
   }
 }
@@ -221,6 +221,9 @@ export async function POST(request: NextRequest) {
       // Optional client-generated UUID. When provided, the server will return
       // the existing message instead of inserting a duplicate on retries.
       idempotency_key,
+      // Optional forward metadata. When present, the new message is marked
+      // as a forwarded message and preserves the origin context.
+      forwarded_from = null,
     } = body
 
     if (!room_id || !content) {
@@ -246,6 +249,56 @@ export async function POST(request: NextRequest) {
 
     // Use sanitized content
     const sanitizedContent = validation.sanitized?.content || content
+
+    // --- Forward authorization ---
+    // When forwarding, verify the original message is available and the
+    // user is authorized to read it before allowing the forward.
+    let forwardMetadata: Record<string, unknown> | null = null
+    if (forwarded_from) {
+      const sourceMessageId =
+        typeof forwarded_from === "object" && forwarded_from !== null
+          ? (forwarded_from as Record<string, unknown>).message_id
+          : undefined
+
+      if (!sourceMessageId || typeof sourceMessageId !== "string") {
+        return NextResponse.json({ error: "Invalid forward metadata" }, { status: 400 })
+      }
+
+      const { data: sourceMessage, error: sourceErr } = await supabase
+        .from("messages")
+        .select("id, room_id, user_id, content, created_at, is_deleted")
+        .eq("id", sourceMessageId)
+        .maybeSingle()
+
+      if (sourceErr) throw sourceErr
+
+      if (!sourceMessage || sourceMessage.is_deleted) {
+        return NextResponse.json({ error: "The original message is no longer available." }, { status: 404 })
+      }
+
+      // User must have been able to read the source room
+      const { data: sourceMembership, error: sourceMemberErr } = await supabase
+        .from("room_members")
+        .select("id, removed_at")
+        .eq("room_id", sourceMessage.room_id)
+        .eq("user_id", user.id)
+        .maybeSingle()
+
+      if (sourceMemberErr) throw sourceMemberErr
+      if (!sourceMembership || sourceMembership.removed_at) {
+        return NextResponse.json({ error: "You are not authorized to forward this message." }, { status: 403 })
+      }
+
+      // Preserve relevant metadata for the forwarded message.
+      forwardMetadata = {
+        message_id: sourceMessage.id,
+        room_id: sourceMessage.room_id,
+        sender_id: sourceMessage.user_id,
+        created_at: sourceMessage.created_at,
+        forwarded_at: new Date().toISOString(),
+        forwarded_by: user.id,
+      }
+    }
 
     const walletKey = getWalletRateLimitKey(user)
     const policy = resolveWalletMessageRatePolicy(walletKey, room_id)
@@ -280,6 +333,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Forwarding requires active membership in the destination group.
+    // We must not auto-join the user when the request is a forward.
+    if (!membership && forwardMetadata) {
+      return NextResponse.json(
+        { error: "You are not a member of the destination group." },
+        { status: 403 },
+      )
+    }
+
     if (!membership) {
       const { data: insertedMembership, error: insertMemberErr } = await supabase
         .from("room_members")
@@ -305,47 +367,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Prepare message data
-    const messageData: Record<string, unknown> = {
-      user_id: user.id,
+    const message = {
       room_id,
+      user_id: user.id,
       content: sanitizedContent,
-      is_encrypted: false,
-      status: "sent",
+      reply_to_id,
+      is_ephemeral,
+      forwarded_from: forwardMetadata,
     }
-
-    if (reply_to_id) {
-      messageData.reply_to_id = reply_to_id
-    }
-
-    // Handle ephemeral messages
-    if (is_ephemeral) {
-      const ttl = await getRoomTTL(room_id)
-      messageData.is_ephemeral = true
-      messageData.expires_at = new Date(Date.now() + ttl * 1000).toISOString()
-    }
-
-    // Attach idempotency key when the client provided one
-    if (idempotency_key) {
-      messageData.idempotency_key = idempotency_key
-    }
-
-    // --- Idempotent insert ---
-    // insertMessageIdempotent performs a pre-check for the key, then inserts.
-    // On a concurrent collision (race condition) it catches the 23505 unique
-    // violation and returns the winning row, so the client always receives a
-    // valid message object regardless of how many retries were made.
-    const { message: savedMessage, isDuplicate, error: insertError } =
-      await insertMessageIdempotent(supabase, messageData as any, "http")
-
-    if (insertError || !savedMessage) {
-      throw new Error(insertError ?? "Insert returned no data")
-    }
-
-    // 200 for duplicate (idempotent replay), 201 for new creation
-    const status = isDuplicate ? 200 : 201
-    return NextResponse.json({ message: savedMessage, success: true, duplicate: isDuplicate }, { status })
-  } catch (error) {
-    console.error("[v0] POST /api/messages error:", error)
-    return NextResponse.json({ error: "Failed to create message" }, { status: 500 })
-  }
-}

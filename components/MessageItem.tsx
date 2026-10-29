@@ -1,13 +1,14 @@
 import React from 'react';
 import { Message } from '@/src/types/message';
 import { EncryptionBadge } from './EncryptionBadge';
-import { Reply } from 'lucide-react';
+import { Reply, Forward } from 'lucide-react';
 
 interface Props {
   message: Message;
   onReply?: (message: Message) => void;
   onJumpToMessage?: (messageId: string) => void;
   onRetry?: (messageId: string) => void;
+  onForward?: (message: Message) => void;
 }
 
 function formatTimestamp(date: Date): string {
@@ -19,6 +20,7 @@ export const MessageItem: React.FC<Props> = ({
   onReply,
   onJumpToMessage,
   onRetry,
+  onForward,
 }) => {
   const isSending = message.status === 'sending';
   const isFailed = message.status === 'failed';
@@ -46,6 +48,20 @@ export const MessageItem: React.FC<Props> = ({
             <p className="text-xs text-indigo-400 mb-1 font-mono truncate">
               {message.sender}
             </p>
+          )}
+
+          {message.forwardedFrom && (
+            <div
+              className={
+                message.isOwn
+                  ? 'mb-1 flex items-center gap-1 text-[11px] italic opacity-80'
+                  : 'mb-1 flex items-center gap-1 text-[11px] italic text-gray-500'
+              }
+              aria-label="Forwarded message"
+            >
+              <Forward className="h-3 w-3 inline-block shrink-0" />
+              <span>Forwarded</span>
+            </div>
           )}
 
           {message.replyTo && (
@@ -102,6 +118,18 @@ export const MessageItem: React.FC<Props> = ({
             aria-label="Reply to message"
           >
             <Reply className="h-3 w-3" />
+          </button>
+        )}
+
+        {onForward && (
+          <button
+            type="button"
+            onClick={() => onForward(message)}
+            className="absolute -top-3 right-7 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-full bg-gray-800 text-gray-200 hover:bg-gray-700 shadow border border-gray-700 text-xs"
+            title="Forward message"
+            aria-label="Forward message"
+          >
+            <Forward className="h-3 w-3" />
           </button>
         )}
       </div>
