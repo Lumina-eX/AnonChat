@@ -29,7 +29,11 @@ export function ConnectionStatusBanner() {
     }
   }, [connectionState, hasBeenDisconnected])
 
-  const showBanner = connectionState !== "connected" || showConnectedSuccess
+  // Don't show banner if WebSocket is not configured
+  const wsUrl = typeof window !== 'undefined' ? process.env.NEXT_PUBLIC_WS_URL : null
+  const isWebSocketConfigured = wsUrl && wsUrl.trim() !== ""
+  
+  const showBanner = isWebSocketConfigured && (connectionState !== "connected" || showConnectedSuccess)
 
   if (!showBanner) return null
 
