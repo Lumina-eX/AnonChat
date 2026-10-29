@@ -4,6 +4,7 @@ const nextConfig = {
     unoptimized: true,
   },
   serverExternalPackages: ["sodium-native", "require-addon"],
+  outputFileTracingRoot: process.cwd(),
   webpack: (config, { isServer }) => {
     if (!isServer) {
       config.resolve.fallback = {
