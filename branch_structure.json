@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "main",
+    "origin",
+    "security/issue-297-implement-stellar-transaction-audit-verification"
+  ],
+  "parent": {
+    "main": null,
+    "origin": "main",
+    "security/issue-297-implement-stellar-transaction-audit-verification": "main"
+  },
+  "order": [
+    "main",
+    "origin",
+    "security/issue-297-implement-stellar-transaction-audit-verification"
+  ]
+}

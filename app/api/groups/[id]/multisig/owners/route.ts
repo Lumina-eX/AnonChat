@@ -115,10 +115,10 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body: OwnerActionBody = await request.json().catch(() => ({}));
+    const body: OwnerActionBody = await request.json().catch(() => ({ action: undefined }) as Partial<OwnerActionBody> as OwnerActionBody);
     const { action } = body;
 
-    if (!action || !["enable", "add", "remove"].includes(action)) {
+    if (!action || !(["enable", "add", "remove"] as const).includes(action)) {
       return NextResponse.json(
         { error: 'action must be one of "enable", "add", "remove"' },
         { status: 400 },
@@ -235,14 +235,13 @@ export async function POST(
       }
 
       // Resolve user ID for the new wallet
-      const newOwnerEmail = `${newOwnerWallet.toLowerCase()}@wallet.anonchat.local`;
       const { data: newOwnerUser } = await supabase
         .from("profiles")
         .select("id")
         .eq("wallet_address", newOwnerWallet)
         .maybeSingle();
 
-      // Fallback: look up via deterministic email pattern
+      // Fallback: case-insensitive lookup
       let newOwnerId: string | null = newOwnerUser?.id ?? null;
       if (!newOwnerId) {
         const { data: authUser } = await supabase
