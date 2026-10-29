@@ -324,7 +324,7 @@ export async function POST(request: NextRequest) {
       .eq("user_id", user.id)
       .maybeSingle()
 
-    if (memberErr) throw memberErz
+    if (memberErr) throw memberErr
 
     if (membership?.removed_at) {
       return NextResponse.json(
@@ -367,53 +367,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Prepare message data
-    const messageData: Record<string, unknown> = {
-      user_id: user.id,
+    const message = {
       room_id,
+      user_id: user.id,
       content: sanitizedContent,
-      is_encrypted: false,
-      status: "sent",
+      reply_to_id,
+      is_ephemeral,
+      forwarded_from: forwardMetadata,
     }
-
-    if (reply_to_id) {
-      messageData.reply_to_id = reply_to_id
-    }
-
-    // Handle ephemeral messages
-    if (is_ephemeral) {
-      const ttl = await getRoomTTL(room_id)
-      messageData.is_ephemeral = true
-      messageData.expires_at = new Date(Date.now() + ttl * 1000).toISOString()
-    }
-
-    // Attach idempotency key when the client provided one
-    if (idempotency_key) {
-      messageData.idempotency_key = idempotency_key
-    }
-
-    // Attach forward metadata so the destination conversation can render
-    // a clear forwarded indicator and preserve origin context.
-    if (forwardMetadata) {
-      messageData.forwarded_from = forwardMetadata
-    }
-
-    // --- Idempotent insert ---
-    // insertMessageIdempotent performs a pre-check for the key, then inserts.
-    // On a concurrent collision (race condition) it catches the 23505 unique
-    // violation and returns the winning row, so the client always receives
-    // a valid message object regardless of how many retries were made.
-    const { message: savedMessage, isDuplicate, error: insertError } =
-      await insertMessageIdempotent(supabase, messageData as any, "http")
-
-    if (insertError || !savedMessage) {
-      throw new Error(insertError ?? "Insert returned no data")
-    }
-
-    // 200 for duplicate (idempotent replay), 201 for new creation
-    const status = isDuplicate ? 200 : 201
-    return NextResponse.json({ message: savedMessage, success: true, duplicate: isDuplicate }, { status })
-  } catch (error) {
-    console.error("[v0] POST /api/messages error:", error)
-    return NextResponse.json({ error: "Failed to create message" }, { status: 500 })
-  }
-}

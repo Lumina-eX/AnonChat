@@ -1,0 +1,21 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-287-implement-message-forwarding-ui",
+    "feat/issue-290-implement-message-attachment-metadata-api",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-287-implement-message-forwarding-ui": "main",
+    "feat/issue-290-implement-message-attachment-metadata-api": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-287-implement-message-forwarding-ui",
+    "feat/issue-290-implement-message-attachment-metadata-api",
+    "origin"
+  ]
+}

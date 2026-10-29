@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
       sigVerifiedAt,
       sessionId,
     );
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("[wallet-auth] /api/auth/wallet-login error:", err);
     return NextResponse.json(
       { error: "Internal server error" },
