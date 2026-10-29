@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const result: any = {};
+    const result: Record<string, unknown> = {};
 
     // Get room-specific config
     if ((type === "both" || type === "room") && roomId) {

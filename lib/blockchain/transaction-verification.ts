@@ -211,7 +211,7 @@ export function buildVerificationResult({
       : null;
   const operationError =
     status === "successful" && memoMatches && !operationMatches
-      ? (operationValidation.error ?? "Transaction operations do not match the expected group action")
+      ? (operationValidation?.error ?? "Transaction operations do not match the expected group action")
       : null;
   const statusError =
     status === "failed"
@@ -413,101 +413,7 @@ export async function verifyStellarTransaction({
   );
 
   if (!isValidTransactionHash(transactionHash)) {
-    const invalidResult = buildVerificationResult({
-      transactionHash,
-      transaction: null,
-      groupActionEventId,
-      groupId,
-      expectedNetwork: expectedNetwork,
-    });
-    logBlockchainOperation(
-      "warn",
-      "Rejected invalid Stellar transaction hash",
-      verificationLogContext({
-        transactionHash,
-        groupActionEventId,
-        groupId,
-      }),
-      correlationId,
-    );
-    return invalidResult;
-  }
-
-  let transaction: StellarTransaction | null = null;
-  try {
-    transaction = await fetchTransactionWithRetry(
-      transactionHash,
-      maxRetries,
-      retryDelayMs,
-      correlationId,
-    );
-  } catch (error) {
-    // Horizon outages must not mark transactions as failed.
-    // Return a retryable "pending" outcome instead.
-    const pendingResult: StellarTransactionVerificationResult = {
-      transactionHash,
-      status: "pending",
-      verified: false,
-      groupActionEventId,
-      groupId,
-      ledge: null,
-      memo: null,
-      error: "Temporary Horizon failure retrieving transaction; retry later",
-      verifiedAt: new Date().toISOString(),
-      explorerUrl: getTransactionExplorerUrl(transactionHash),
-    };
-    logBlockchainOperation(
-      "warn",
-      "Horizon transaction retrieval failed; marking verification pending",
-      {
-        ...verificationLogContext({
-          transactionHash,
-          groupActionEventId,
-          groupId,
-        }),
-        error: {
-          type: error instanceof Error ? error.name : "HorizonError",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      },
-      correlationId,
-    );
-    if (supabase) {
-      try {
-        await storeVerificationResult(supabase, pendingResult, {
-          network: expectedNetwork,
-          ledgeCloseTime: null,
-          transactionResult: null,
-          validationDetails: null,
-        });
-      } catch (storeError) {
-        logBlockchainOperation(
-          "error",
-          "Failed to persist pending verification result",
-          {
-            ...verificationLogContext({
-              transactionHash,
-              groupActionEventId,
-              groupId,
-            }),
-            error: {
-              type: storeError instanceof Error ? storeError.name : "StoreError",
-              message:
-                storeError instanceof Error
-                  ? storeError.message
-                  : String(storeError),
-            },
-          },
-          correlationId,
-        );
-      }
-    }
-    return pendingResult;
-  }
-
-  // Transaction not found on Horizon.
-  if (!transaction) {
-    const pendingResult = buildVerificationResult({
+    return buildVerificationResult({
       transactionHash,
       transaction: null,
       groupActionEventId,
@@ -515,106 +421,31 @@ export async function verifyStellarTransaction({
       expectedMemo,
       expectedNetwork,
     });
-    if (supabase) {
-      await storeVerificationResult(supabase, pendingResult, {
-        network: expectedNetwork,
-        ledgeCloseTime: null,
-        transactionResult: null,
-        validationDetails: null,
-      });
-    }
-    return pendingResult;
   }
 
-  // Only fetch operations when the transaction succeeded; failed tx operations
-  // are not relevant for matching.
-  let operations: Array<Record<string, unknown>> | null = null;
-  const hasExpectedOperation =
-    Boolean(expectedOperationType) ||
-    Boolean(expectedSourceAccount) ||
-    Boolean(expectedDestinationAccount) ||
-    Boolean(expectedAsset) ||
-    Boolean(expectedAmount);
+  const transaction = await fetchTransactionWithRetry(
+    transactionHash,
+    maxRetries,
+    retryDelayMs,
+    correlationId,
+  );
 
-  if (transaction.successful && hasExpectedOperation) {
-    try {
-      operations = await fetchOperationsWithRetry(
-        transactionHash,
-        maxRetries,
-        retryDelayMs,
-        correlationId,
-      );
-    } catch (error) {
-      const pendingResult: StellarTransactionVerificationResult = {
-        transactionHash,
-        status: "pending",
-        verified: false,
-        groupActionEventId,
-        groupId,
-        ledge: transaction.ledge ?? null,
-        memo: transaction.memo ?? null,
-        error:
-          "Temporary Horizon failure retrieving transaction operations; retry later",
-        verifiedAt: new Date().toISOString(),
-        explorerUrl: getTransactionExplorerUrl(transactionHash),
-      };
-      logBlockchainOperation(
-        "warn",
-        "Horizon operations retrieval failed; marking verification pending",
-        {
-          ...verificationLogContext({
-            transactionHash,
-            groupActionEventId,
-            groupId,
-          }),
-          error: {
-            type: error instanceof Error ? error.name : "HorizonError",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        },
-        correlationId,
-      );
-      if (supabase) {
-        try {
-          await storeVerificationResult(supabase, pendingResult, {
-            network: expectedNetwork,
-            ledgeCloseTime: null,
-            transactionResult: null,
-            validationDetails: null,
-          });
-        } catch (storeError) {
-          logBlockchainOperation(
-            "error",
-            "Failed to persist pending verification result",
-            {
-              ...verificationLogContext({
-                transactionHash,
-                groupActionEventId,
-                groupId,
-              }),
-              error: {
-                type: storeError instanceof Error ? storeError.name : "StoreError",
-                message:
-                  storeError instanceof Error
-                    ? storeError.message
-                    : String(storeError),
-              },
-            },
-            correlationId,
-          );
-        }
-      }
-      return pendingResult;
-    }
+  let operationValidation: OperationValidationResult | null = null;
+  if (transaction && transaction.successful) {
+    const operations = await fetchOperationsWithRetry(
+      transactionHash,
+      maxRetries,
+      retryDelayMs,
+      correlationId,
+    );
+    operationValidation = validateOperationsAgainstExpected(operations, {
+      type: expectedOperationType,
+      sourceAccount: expectedSourceAccount,
+      destinationAccount: expectedDestinationAccount,
+      asset: expectedAsset,
+      amount: expectedAmount,
+    });
   }
-
-  const operationValidation = validateOperationsAgainstExpected(operations, {
-    type: expectedOperationType,
-    sourceAccount: expectedSourceAccount,
-    destinationAccount: expectedDestinationAccount,
-    asset: expectedAsset,
-    amount: expectedAmount,
-  });
 
   const result = buildVerificationResult({
     transactionHash,
@@ -628,27 +459,25 @@ export async function verifyStellarTransaction({
 
   if (supabase) {
     await storeVerificationResult(supabase, result, {
-      network: (transaction.network ?? expectedNetwork) as string | null,
-      ledgeCloseTime: transaction.ledgerCloseTime ?? null,
-      transactionResult: transaction.result ?? null,
-      validationDetails: operationValidation.details,
+      network: expectedNetwork,
+      ledgeCloseTime: transaction?.createdAt ?? null,
+      transactionResult: transaction
+        ? transaction.successful
+          ? "success"
+          : "failed"
+        : null,
+      validationDetails: operationValidation?.details ?? null,
     });
   }
 
   logBlockchainOperation(
     result.verified ? "info" : "warn",
     "Stellar transaction verification completed",
-    {
-      ...verificationLogContext({
-        transactionHash,
-        groupActionEventId,
-        groupId,
-      }),
-      status: result.status,
-      verified: result.verified,
-      ledge: result.ledge,
-      error: result.error,
-    },
+    verificationLogContext({
+      transactionHash,
+      groupActionEventId,
+      groupId,
+    }),
     correlationId,
   );
 

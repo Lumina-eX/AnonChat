@@ -345,9 +345,9 @@ export async function POST(
         new_owner: newOwnerWalletAddress,
         timestamp: new Date().toISOString(),
       }
-      const metadataHash = computeHash(transferMetadata as any)
+      const metadataHash = computeHash(transferMetadata as unknown as Parameters<typeof computeHash>[0])
       const result = await submitMetadataHash(groupId, metadataHash, undefined, {
-        supabase: supabase as any,
+        supabase: supabase as unknown as SupabaseClient,
       })
 
       if (result.success && result.transactionHash) {
@@ -368,7 +368,7 @@ export async function POST(
           correlationId
         )
       }
-    } catch (blockchainErr: any) {
+    } catch (blockchainErr: unknown) {
       // Non-fatal: the DB transfer is the source of truth
       logBlockchainOperation(
         "error",
@@ -376,8 +376,8 @@ export async function POST(
         {
           groupId,
           error: {
-            type: blockchainErr.name || "UnknownError",
-            message: blockchainErr.message || "Unknown error",
+            type: blockchainErr instanceof Error ? blockchainErr.name || "UnknownError" : "UnknownError",
+            message: blockchainErr instanceof Error ? blockchainErr.message || "Unknown error" : "Unknown error",
           },
         },
         correlationId
