@@ -1,22 +1,26 @@
 import React, { useState } from 'react';
-import { Copy, LogOut, X, Users } from 'lucide-react';
+import { Copy, LogOut, X, Users, UserPlus } from 'lucide-react';
+import { GroupInviteModal } from './GroupInviteModal';
 
 interface GroupSettingsPanelProps {
   isOpen: boolean;
   onClose: () => void;
   roomName: string;
+  inviteCode?: string;
 }
 
 export const GroupSettingsPanel: React.FC<GroupSettingsPanelProps> = ({
   isOpen,
   onClose,
-  roomName
+  roomName,
+  inviteCode: propInviteCode,
 }) => {
   const [copied, setCopied] = useState(false);
   const [showConfirmLeave, setShowConfirmLeave] = useState(false);
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
 
-  // Mock data for presentation purposes
-  const inviteCode = "ANON-CHAT-99XF";
+  // Default invite code or provided prop
+  const inviteCode = propInviteCode || "ANON-CHAT-99XF";
   const memberCount = 14;
   const description = "A private, decentralized room for secure group discussions.";
 
@@ -98,8 +102,17 @@ export const GroupSettingsPanel: React.FC<GroupSettingsPanelProps> = ({
           </div>
         </div>
 
-        {/* 3. Option to Leave the Group */}
-        <div className="pt-4 border-t border-gray-800">
+        {/* 3. Action Buttons */}
+        <div className="pt-4 border-t border-gray-800 space-y-2.5">
+          <button
+            onClick={() => setIsInviteModalOpen(true)}
+            data-testid="open-invite-modal-button"
+            className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-medium py-2.5 px-4 rounded-xl transition-all shadow-md active:scale-[0.98]"
+          >
+            <UserPlus className="size-4" />
+            Invite Members
+          </button>
+
           <button
             onClick={() => setShowConfirmLeave(true)}
             className="w-full flex items-center justify-center gap-2 bg-red-950/30 hover:bg-red-600 border border-red-900/50 hover:border-red-500 text-red-400 hover:text-white font-medium py-2.5 px-4 rounded-xl transition-all shadow-sm"
@@ -109,6 +122,14 @@ export const GroupSettingsPanel: React.FC<GroupSettingsPanelProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Group Invite Sharing Modal */}
+      <GroupInviteModal
+        isOpen={isInviteModalOpen}
+        onClose={() => setIsInviteModalOpen(false)}
+        roomName={roomName}
+        inviteCode={inviteCode}
+      />
 
       {/* Confirmation Safety Dialog Modal */}
       {showConfirmLeave && (
