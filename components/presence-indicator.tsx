@@ -30,15 +30,19 @@ export function PresenceIndicator({ status, className, showText = false }: Prese
       title={statusLabels[normalizedStatus]}
     >
       <span
+        aria-hidden="true"
         className={cn(
           "w-2.5 h-2.5 rounded-full ring-2 ring-background transition-all duration-300",
           statusColors[normalizedStatus]
         )}
       />
-      {showText && (
+      {/* Status is never conveyed by colour alone: always expose a text label. */}
+      {showText ? (
         <span className="text-xs text-muted-foreground font-medium">
           {statusLabels[normalizedStatus]}
         </span>
+      ) : (
+        <span className="sr-only">{statusLabels[normalizedStatus]}</span>
       )}
     </div>
   )

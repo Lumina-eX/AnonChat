@@ -11,6 +11,7 @@ export default defineConfig({
       "lib/utils/stellar-address.test.ts",
       "components/GroupVerificationBadge.test.tsx",
       "components/chat-message-bubble.test.tsx",
+      "components/chat-accessibility.test.tsx",
       "components/MessageItem.test.tsx",
       "src/components/MessageInput.test.tsx",
       "src/hooks/useMessages.test.ts",

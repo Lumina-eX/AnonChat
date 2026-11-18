@@ -132,7 +132,7 @@ export function ChatEmptyState() {
         </div>
 
         {/* Subtle hint */}
-        <p className="text-xs text-muted-foreground/60 animate-in fade-in-0 duration-700 delay-500">
+        <p className="text-xs text-muted-foreground animate-in fade-in-0 duration-700 delay-500">
           Select a room from the left panel or create a new one
         </p>
       </div>
