@@ -37,6 +37,8 @@ export interface StellarTransaction {
   memoType?: string;
   ledger: number;
   created_at: string;
+  /** ISO-8601 timestamp when the ledger containing this transaction was closed. */
+  ledger_close_time?: string;
   successful: boolean;
   source_account?: string;
   operation_count?: number;
@@ -46,7 +48,8 @@ export type StellarTransactionVerificationStatus =
   | "successful"
   | "failed"
   | "pending"
-  | "invalid";
+  | "invalid"
+  | "unverifiable";
 
 export interface StellarTransactionVerificationResult {
   transactionHash: string;
@@ -59,6 +62,88 @@ export interface StellarTransactionVerificationResult {
   error: string | null;
   verifiedAt: string;
   explorerUrl: string | null;
+}
+
+// ── Audit verification types ──────────────────────────────────────────────────
+
+/**
+ * AnonChat application actions that can be verified against a Stellar transaction.
+ * Each value corresponds to a specific blockchain operation type.
+ */
+export type AnonChatAction =
+  | "group_creation"
+  | "group_join"
+  | "group_leave"
+  | "member_removal"
+  | "wallet_auth"
+  | "ownership_transfer"
+  | "audit_event";
+
+/**
+ * Input to the audit verification service.
+ */
+export interface AuditVerificationInput {
+  /** 64-character hex Stellar transaction hash. */
+  transactionHash: string;
+  /** Expected AnonChat action this transaction should correspond to. */
+  expectedAction: AnonChatAction;
+  /** Optional group/room ID for contextual validation. */
+  groupId?: string | null;
+  /** Optional correlation ID for distributed tracing. */
+  correlationId?: string;
+  /** Optional expected memo value embedded in the transaction. */
+  expectedMemo?: string | null;
+  /** Optional expected source account (Stellar public key). */
+  expectedSourceAccount?: string | null;
+}
+
+/**
+ * Persistent audit record stored in the database after verification.
+ */
+export interface TransactionAuditRecord {
+  id?: string;
+  transaction_hash: string;
+  network_identifier: string;
+  ledger: number | null;
+  ledger_close_time: string | null;
+  source_account: string | null;
+  operation_count: number | null;
+  operation_type: string | null;
+  expected_action: AnonChatAction;
+  group_id: string | null;
+  status: StellarTransactionVerificationStatus;
+  verified: boolean;
+  retry_count: number;
+  error_message: string | null;
+  diagnostic_details: Record<string, unknown> | null;
+  verified_at: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * Outcome returned by the audit verification service.
+ */
+export interface AuditVerificationResult {
+  transactionHash: string;
+  status: StellarTransactionVerificationStatus;
+  verified: boolean;
+  networkIdentifier: string;
+  ledger: number | null;
+  ledgerCloseTime: string | null;
+  sourceAccount: string | null;
+  operationCount: number | null;
+  operationType: string | null;
+  expectedAction: AnonChatAction;
+  groupId: string | null;
+  error: string | null;
+  diagnosticDetails: Record<string, unknown> | null;
+  verifiedAt: string;
+  explorerUrl: string | null;
+  /** True when the record already existed and was not duplicated. */
+  idempotent: boolean;
+  retryCount: number;
+  correlationId: string;
 }
 
 export interface VerificationResponse {
