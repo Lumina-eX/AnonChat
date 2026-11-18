@@ -43,6 +43,12 @@ export function MessageSearchBar({
 
   return (
     <div
+      role="search"
+      aria-label="Search messages in this group"
+      // When collapsed the bar is visually hidden; `inert` also removes it
+      // from the tab order and the accessibility tree.
+      inert={!isVisible}
+      aria-hidden={!isVisible}
       className={cn(
         "overflow-hidden transition-all duration-200 ease-out",
         isVisible ? "max-h-14 opacity-100" : "max-h-0 opacity-0 pointer-events-none",
@@ -51,10 +57,18 @@ export function MessageSearchBar({
       <div className="px-4 sm:px-5 py-2 border-b border-border/70 bg-card/50 backdrop-blur-sm">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <label htmlFor="message-search-input" className="sr-only">
+              Search messages
+            </label>
+            <Search
+              aria-hidden="true"
+              className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none"
+            />
             <input
+              id="message-search-input"
               ref={inputRef}
-              type="text"
+              type="search"
+              aria-describedby="message-search-results"
               value={value}
               onChange={(e) => onChange(e.target.value)}
               placeholder="Search messages…"
@@ -62,14 +76,18 @@ export function MessageSearchBar({
             />
           </div>
 
-          {/* Result count badge */}
-          {value.trim() && (
-            <span className="shrink-0 text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-              {resultCount === 0
+          {/* Result count badge — announced politely as it changes */}
+          <span
+            id="message-search-results"
+            role="status"
+            className="shrink-0 text-xs text-muted-foreground tabular-nums whitespace-nowrap empty:hidden"
+          >
+            {value.trim()
+              ? resultCount === 0
                 ? "No results"
-                : `${resultCount} result${resultCount !== 1 ? "s" : ""}`}
-            </span>
-          )}
+                : `${resultCount} result${resultCount !== 1 ? "s" : ""}`
+              : ""}
+          </span>
 
           {/* Close button */}
           <button
@@ -78,7 +96,7 @@ export function MessageSearchBar({
             aria-label="Close search"
             className="shrink-0 inline-flex items-center justify-center h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
           >
-            <X className="h-3.5 w-3.5" />
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         </div>
       </div>

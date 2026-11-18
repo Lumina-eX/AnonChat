@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Loader2, Search, Users, X } from "lucide-react"
 import { cn, shortenWalletAddress } from "@/lib/utils"
 import {
@@ -12,6 +12,7 @@ import {
   useWebSocketMessage,
   useWebSocketSend,
 } from "@/lib/websocket/hooks"
+import { useFocusTrap, useMediaQuery } from "@/lib/a11y"
 
 export type Member = {
   wallet: string
@@ -208,9 +209,20 @@ export default function MemberPanel({
 
   const closeMobilePanel = () => onMobileOpenChange?.(false)
 
+  // Below the lg breakpoint the panel is rendered as a full-screen overlay,
+  // so it behaves like a modal dialog: trap focus, close on Escape and
+  // return focus to the button that opened it.
+  const panelRef = useRef<HTMLElement>(null)
+  const isLargeScreen = useMediaQuery("(min-width: 1024px)")
+  const isOverlay = Boolean(roomId && mobileOpen && !isLargeScreen)
+  useFocusTrap(panelRef, isOverlay, { onEscape: closeMobilePanel })
+
   return (
     <aside
+      ref={panelRef}
       aria-label="Group members"
+      role={isOverlay ? "dialog" : undefined}
+      aria-modal={isOverlay ? true : undefined}
       className={cn(
         "flex w-full flex-col border-border/60 bg-background/95 text-foreground md:w-80 md:border-l",
         roomId && !mobileOpen && "hidden lg:flex",
@@ -223,8 +235,8 @@ export default function MemberPanel({
           <Users className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold">Members</h2>
-            <p className="text-xs text-muted-foreground">
-              {members.length} total · {onlineCount} online
+            <p className="text-xs text-muted-foreground" role="status">
+              {memberTotal} total · {onlineCount} online
             </p>
           </div>
         </div>
@@ -261,11 +273,12 @@ export default function MemberPanel({
           </label>
 
           {loading && displayedMembers.length === 0 ? (
-            <div className="flex items-center justify-center py-8 text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" aria-label="Loading members" />
+            <div role="status" className="flex items-center justify-center py-8 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+              <span className="sr-only">Loading members…</span>
             </div>
           ) : error && displayedMembers.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">
+            <p role="alert" className="py-6 text-center text-sm text-muted-foreground">
               Unable to load members right now.
             </p>
           ) : memberTotal === 0 ? (
@@ -277,7 +290,7 @@ export default function MemberPanel({
               No members match that alias.
             </p>
           ) : (
-            <ul className="min-h-0 space-y-1 overflow-y-auto" aria-live="polite">
+            <ul className="min-h-0 space-y-1 overflow-y-auto" aria-label="Group members">
               {filteredMembers.map((member) => {
                 const status = getStatus(member)
                 const alias = getWalletAlias(member.wallet)
@@ -289,9 +302,6 @@ export default function MemberPanel({
                     <PresenceIndicator status={status} className="shrink-0" />
                     <span className="min-w-0 truncate font-mono text-xs" title={alias}>
                       {alias}
-                    </span>
-                    <span className="sr-only">
-                      {status === "online" ? "Online" : status === "offline" ? "Offline" : "Recently active"}
                     </span>
                   </li>
                 )
