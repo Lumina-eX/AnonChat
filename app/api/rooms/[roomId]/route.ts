@@ -4,10 +4,15 @@ import { consumeNonce, verifyWalletSignature } from "@/lib/auth/stellar-verify";
 import { validateRequiredFields, validateStellarAddress } from "@/lib/auth/validation";
 import { requireGroupOwner } from "@/lib/middleware/group-ownership";
 import { computeHash } from "@/lib/blockchain/metadata-hash";
-import { submitMetadataHash, getTransactionExplorerUrl } from "@/lib/blockchain/stellar-service";
+import {
+  submitMetadataHash,
+  getTransactionExplorerUrl,
+  generateIdempotencyKey,
+} from "@/lib/blockchain/stellar-service";
 import { GroupMetadata } from "@/types/blockchain";
 import { persistGroupTransactionMemo } from "@/lib/blockchain/memo-store";
 import { type SupabaseClient } from "@supabase/supabase-js";
+import { logBlockchainOperation, generateCorrelationId } from "@/lib/blockchain/logger";
 
 export async function GET(
   request: NextRequest,
@@ -39,6 +44,7 @@ export async function PATCH(
   { params }: { params: Promise<{ roomId: string }> },
 ) {
   const { roomId } = await params;
+  const correlationId = generateCorrelationId();
 
   try {
     const supabase = await createClient();
@@ -79,10 +85,10 @@ export async function PATCH(
       groupId: roomId,
       callerWallet: walletAddress,
       userId: user.id,
-    })
+    });
 
     if (ownerCheck instanceof NextResponse) {
-      return ownerCheck
+      return ownerCheck;
     }
 
     const nonce = await consumeNonce(walletAddress);
@@ -124,7 +130,7 @@ export async function PATCH(
       throw updateError || new Error("Failed to update room");
     }
 
-    // ── Fixed: owner_wallet variable mapping resolved below ──────────────────
+    // Build metadata for blockchain submission
     const metadata: GroupMetadata = {
       id: updatedRoom.id,
       name: updatedRoom.name,
@@ -142,9 +148,26 @@ export async function PATCH(
     let blockchainSubmitted = false;
     let explorerUrl: string | null = null;
     let actualFeeCharged: string | null = null;
+    let blockchainError: string | null = null;
+    let isDuplicate = false;
+    let attemptId: string | null = null;
+
+    // Generate idempotency key for this update
+    const idempotencyKey = generateIdempotencyKey(
+      roomId,
+      "metadata_hash",
+      `${currentMetadataHash}:${Date.now()}`
+    );
 
     try {
-      const result = await submitMetadataHash(roomId, currentMetadataHash);
+      const result = await submitMetadataHash(roomId, currentMetadataHash, undefined, {
+        supabase: supabase as any,
+        idempotencyKey,
+      });
+
+      isDuplicate = result.isDuplicate ?? false;
+      attemptId = result.attemptId ?? null;
+
       if (result.success && result.transactionHash) {
         stellarTxHash = result.transactionHash;
         metadataHash = currentMetadataHash;
@@ -170,9 +193,45 @@ export async function PATCH(
             txHash: stellarTxHash,
           });
         }
+
+        logBlockchainOperation(
+          "info",
+          "Room update blockchain submission successful",
+          {
+            roomId,
+            transactionHash: stellarTxHash,
+            isDuplicate,
+            attemptId,
+          },
+          correlationId,
+        );
+      } else {
+        blockchainError = result.error || "Blockchain submission failed";
+        logBlockchainOperation(
+          "warn",
+          "Room update blockchain submission failed",
+          {
+            roomId,
+            error: { type: "BlockchainError", message: blockchainError },
+            attemptId,
+          },
+          correlationId,
+        );
       }
-    } catch (blockchainError: any) {
-      console.error("[rooms/[roomId]] PATCH blockchain submission error:", blockchainError);
+    } catch (blockchainErrorObj: any) {
+      blockchainError = blockchainErrorObj.message || "Unknown blockchain error";
+      logBlockchainOperation(
+        "error",
+        "Room update blockchain submission error",
+        {
+          roomId,
+          error: {
+            type: blockchainErrorObj.name || "UnknownError",
+            message: blockchainErrorObj.message || "Unknown error",
+          },
+        },
+        correlationId,
+      );
     }
 
     return NextResponse.json(
@@ -190,12 +249,27 @@ export async function PATCH(
           feeCharged: actualFeeCharged || undefined,
           explorerUrl: explorerUrl || undefined,
           memoGroupId: memoGroupId || undefined,
+          error: blockchainError,
+          isDuplicate,
+          attemptId,
         },
       },
       { status: 200 },
     );
   } catch (error) {
     console.error("[rooms/[roomId]] PATCH error:", error);
+    logBlockchainOperation(
+      "error",
+      "Room update failed",
+      {
+        roomId,
+        error: {
+          type: error instanceof Error ? error.name : "UnknownError",
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+      },
+      correlationId,
+    );
     return NextResponse.json({ error: "Failed to update room" }, { status: 500 });
   }
 }

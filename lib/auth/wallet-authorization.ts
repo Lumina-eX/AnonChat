@@ -13,6 +13,7 @@
 import { NextResponse } from "next/server";
 import { consumeNonce, verifyWalletSignature } from "@/lib/auth/stellar-verify";
 import { validateWalletAddressWithMessage } from "@/lib/auth/validation";
+import { recordGroupAuditEvent } from "@/lib/blockchain/audit";
 
 export type WalletAuthorizationResult =
   | { ok: true; walletAddress: string; nonce: string }
@@ -23,20 +24,56 @@ export interface WalletAuthPayload {
   signature?: string;
 }
 
+export interface WalletAuditContext {
+  supabase: any;
+  groupId?: string;
+}
+
 /**
  * Verifies wallet authorization via nonce + signature.
  * Returns standardized error responses for invalid or missing signatures.
+ *
+ * When `auditContext` is provided, every verification attempt (success or
+ * failure) is recorded to the `group_audit_events` audit trail for
+ * accountability and debugging.
  */
 export async function verifyWalletAuthorization(
   payload: WalletAuthPayload,
   action?: string,
+  auditContext?: WalletAuditContext,
 ): Promise<WalletAuthorizationResult> {
   const { walletAddress, signature } = payload;
   const logPrefix = action ? `[${action}]` : "[wallet-auth]";
+  const address = walletAddress as string;
 
-  const walletError = validateWalletAddressWithMessage(walletAddress as string);
+  const recordAudit = async (
+    eventType: "wallet_verified" | "wallet_verification_failed",
+    reason?: string,
+  ) => {
+    if (!auditContext?.groupId) return;
+
+    await recordGroupAuditEvent({
+      supabase: auditContext.supabase,
+      groupId: auditContext.groupId,
+      eventType,
+      metadata: {
+        action: action ?? "wallet_auth",
+        walletAddress: address,
+        ...(reason ? { reason } : {}),
+        verifiedAt: new Date().toISOString(),
+      },
+    }).catch((e) =>
+      console.warn(
+        `${logPrefix} failed to record wallet verification audit event:`,
+        e,
+      ),
+    );
+  };
+
+  const walletError = validateWalletAddressWithMessage(address);
   if (walletError) {
     console.warn(`${logPrefix} validation failed: ${walletError}`);
+    await recordAudit("wallet_verification_failed", walletError);
     return {
       ok: false,
       response: NextResponse.json({ error: walletError }, { status: 400 }),
@@ -45,16 +82,21 @@ export async function verifyWalletAuthorization(
 
   if (!signature || typeof signature !== "string" || signature.trim() === "") {
     console.warn(`${logPrefix} validation failed: signature is required`);
+    await recordAudit("wallet_verification_failed", "signature is required");
     return {
       ok: false,
       response: NextResponse.json({ error: "signature is required" }, { status: 400 }),
     };
   }
 
-  const nonce = await consumeNonce(walletAddress as string);
+  const nonce = await consumeNonce(address);
   if (!nonce) {
     console.warn(
-      `${logPrefix} nonce missing or expired for wallet: ${(walletAddress as string).substring(0, 8)}...`,
+      `${logPrefix} nonce missing or expired for wallet: ${address.substring(0, 8)}...`,
+    );
+    await recordAudit(
+      "wallet_verification_failed",
+      "Nonce not found or expired. Request a new nonce first.",
     );
     return {
       ok: false,
@@ -65,14 +107,14 @@ export async function verifyWalletAuthorization(
     };
   }
 
-  const isValid = verifyWalletSignature(
-    walletAddress as string,
-    nonce,
-    signature,
-  );
+  const isValid = verifyWalletSignature(address, nonce, signature);
   if (!isValid) {
     console.warn(
-      `${logPrefix} signature verification failed for wallet: ${(walletAddress as string).substring(0, 8)}...`,
+      `${logPrefix} signature verification failed for wallet: ${address.substring(0, 8)}...`,
+    );
+    await recordAudit(
+      "wallet_verification_failed",
+      "Signature verification failed. Wallet ownership could not be proved.",
     );
     return {
       ok: false,
@@ -87,10 +129,12 @@ export async function verifyWalletAuthorization(
   }
 
   console.log(
-    `${logPrefix} wallet authorized: ${(walletAddress as string).substring(0, 8)}...`,
+    `${logPrefix} wallet authorized: ${address.substring(0, 8)}...`,
   );
 
-  return { ok: true, walletAddress: walletAddress as string, nonce };
+  await recordAudit("wallet_verified");
+
+  return { ok: true, walletAddress: address, nonce };
 }
 
 /**

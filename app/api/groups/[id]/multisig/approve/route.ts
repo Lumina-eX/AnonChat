@@ -74,7 +74,10 @@ export async function POST(
     }
 
     // Verify wallet ownership via nonce (prevents HTTP replay of approval requests)
-    const auth = await verifyWalletAuthorization(body, "multisig_approve");
+    const auth = await verifyWalletAuthorization(body, "multisig_approve", {
+      supabase,
+      groupId,
+    });
     if (!auth.ok) return auth.response;
 
     // Ensure wallet belongs to the authenticated user

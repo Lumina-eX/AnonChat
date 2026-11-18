@@ -6,22 +6,16 @@ import {
   generateCorrelationId,
   logBlockchainOperation,
 } from "@/lib/blockchain/logger";
+import type { SupabaseClientLike } from "@/lib/blockchain/stellar-service";
 import type {
   StellarTransaction,
   StellarTransactionVerificationResult,
   StellarTransactionVerificationStatus,
 } from "@/types/blockchain";
-
-type SupabaseErrorLike = { message: string };
-type SupabaseInsertResult = PromiseLike<{ error: SupabaseErrorLike | null }>;
-type SupabaseInsertable = {
-  from: (table: string) => {
-    insert: (values: Record<string, unknown>) => SupabaseInsertResult | any;
-  };
-};
+import { upsertTransactionReceipt } from "@/lib/blockchain/transaction-receipts";
 
 export type VerifyStellarTransactionInput = {
-  supabase?: SupabaseInsertable;
+  supabase?: SupabaseClientLike;
   transactionHash: string;
   groupActionEventId?: string | null;
   groupId?: string | null;
@@ -119,7 +113,7 @@ export function buildVerificationResult({
 }
 
 async function storeVerificationResult(
-  supabase: SupabaseInsertable,
+  supabase: SupabaseClientLike,
   result: StellarTransactionVerificationResult,
 ) {
   const { error } = await supabase.from("stellar_transaction_verifications").insert({
@@ -171,6 +165,19 @@ export async function verifyStellarTransaction({
   if (supabase) {
     try {
       await storeVerificationResult(supabase, result);
+      if (groupActionEventId) {
+        await upsertTransactionReceipt({
+          supabase,
+          transactionHash,
+          operationId: groupActionEventId,
+          status: result.status === "successful" ? "confirmed" : result.status === "failed" ? "failed" : "pending",
+          ledgerSequence: result.ledger,
+          blockTimestamp: transaction?.created_at ?? null,
+          confirmedAt: result.status === "successful" ? result.verifiedAt : null,
+          errorMessage: result.error,
+          metadata: { group_id: groupId, memo: result.memo },
+        });
+      }
     } catch (error) {
       logBlockchainOperation(
         "error",

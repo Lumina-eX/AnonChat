@@ -1,4 +1,4 @@
-import type { User } from "@supabase/supabase-js"
+import type { User } from "@/lib/auth/types"
 import { validateStellarAddress } from "@/lib/auth/validation"
 import { getRedisClient } from "@/lib/redis"
 

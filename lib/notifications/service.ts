@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { pushNotificationRealtime } from "@/lib/notifications/dispatch";
+export { pushMemberRemovalRealtime } from "@/lib/notifications/dispatch";
 import type {
   CreateNotificationInput,
   NotificationRecord,
@@ -80,6 +81,27 @@ export async function notifyGroupAdded(
     body: `You were added to "${groupName}".`,
     groupId,
     metadata: { groupName },
+  });
+}
+
+export async function notifyMemberRemoved(
+  supabase: SupabaseClient,
+  userId: string,
+  groupId: string,
+  groupName: string,
+  targetWallet: string,
+): Promise<CreateNotificationResult> {
+  return createNotification(supabase, {
+    userId,
+    type: "member_removed",
+    title: "Removed from group",
+    body: `You were removed from "${groupName}".`,
+    groupId,
+    metadata: {
+      groupName,
+      targetWallet,
+      reason: "group_moderation",
+    },
   });
 }
 

@@ -75,7 +75,10 @@ export async function POST(
     const body: ProposeBody = await request.json().catch(() => ({}));
 
     // Verify wallet signature over nonce
-    const auth = await verifyWalletAuthorization(body, "multisig_propose");
+    const auth = await verifyWalletAuthorization(body, "multisig_propose", {
+      supabase,
+      groupId,
+    });
     if (!auth.ok) return auth.response;
 
     // Ensure wallet matches authenticated user

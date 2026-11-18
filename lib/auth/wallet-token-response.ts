@@ -12,11 +12,12 @@ export async function buildWalletAuthResponse(
   body: Record<string, unknown>,
   status: number,
   sigVerifiedAt?: number,
+  sessionId?: string,
 ): Promise<NextResponse> {
   const jti = createRefreshTokenId();
   const sigTime = sigVerifiedAt ?? Math.floor(Date.now() / 1000);
   const [accessToken, refreshToken] = await Promise.all([
-    signWalletAccessToken(walletAddress, sigTime),
+    signWalletAccessToken(walletAddress, sigTime, sessionId),
     signWalletRefreshToken(walletAddress, jti, sigTime),
   ]);
 

@@ -8,6 +8,8 @@ import {
 } from "@/lib/wallet-message-rate-limit"
 import { getRoomTTL } from "@/lib/ephemeral-cleanup"
 import { type NextRequest, NextResponse } from "next/server"
+import { validateMessage, ValidationErrorType } from "@/lib/middleware/message-validation"
+import { insertMessageIdempotent } from "@/lib/messages/idempotency"
 
 export async function GET(request: NextRequest) {
   try {
@@ -127,6 +129,23 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "id and content are required" }, { status: 400 })
     }
 
+    // Validate message content for edits
+    const validation = validateMessage({ content, id }, 'http')
+    if (!validation.isValid) {
+      const statusCode = validation.error?.type === ValidationErrorType.MESSAGE_TOO_LONG ? 413 : 400
+      return NextResponse.json(
+        {
+          error: validation.error?.message,
+          type: validation.error?.type,
+          details: validation.error?.details,
+        },
+        { status: statusCode }
+      )
+    }
+
+    // Use sanitized content
+    const sanitizedContent = validation.sanitized?.content || content
+
     const windowMinutes = Number(editWindowMinutes ?? process.env.MESSAGE_EDIT_WINDOW_MINUTES ?? 5)
     const windowMs = windowMinutes * 60 * 1000
 
@@ -164,7 +183,7 @@ export async function PUT(request: NextRequest) {
     const { data, error } = await supabase
       .from("messages")
       .update({
-        content,
+        content: sanitizedContent,
         edited_at: new Date(now).toISOString(),
       })
       .eq("id", id)
@@ -194,11 +213,39 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { room_id, content, is_ephemeral = false } = body
+    const {
+      room_id,
+      content,
+      is_ephemeral = false,
+      reply_to_id = null,
+      // Optional client-generated UUID. When provided, the server will return
+      // the existing message instead of inserting a duplicate on retries.
+      idempotency_key,
+    } = body
 
     if (!room_id || !content) {
       return NextResponse.json({ error: "room_id and content are required" }, { status: 400 })
     }
+
+    // Validate message content (idempotency_key passes through as an optional field)
+    const validation = validateMessage(
+      { content, roomId: room_id, ...(idempotency_key ? { idempotency_key } : {}) },
+      "http",
+    )
+    if (!validation.isValid) {
+      const statusCode = validation.error?.type === ValidationErrorType.MESSAGE_TOO_LONG ? 413 : 400
+      return NextResponse.json(
+        {
+          error: validation.error?.message,
+          type: validation.error?.type,
+          details: validation.error?.details,
+        },
+        { status: statusCode },
+      )
+    }
+
+    // Use sanitized content
+    const sanitizedContent = validation.sanitized?.content || content
 
     const walletKey = getWalletRateLimitKey(user)
     const policy = resolveWalletMessageRatePolicy(walletKey, room_id)
@@ -229,7 +276,7 @@ export async function POST(request: NextRequest) {
     if (membership?.removed_at) {
       return NextResponse.json(
         { error: "You have been removed from this room and cannot send messages" },
-        { status: 403 }
+        { status: 403 },
       )
     }
 
@@ -258,12 +305,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Prepare message data
-    const messageData: any = {
+    const messageData: Record<string, unknown> = {
       user_id: user.id,
       room_id,
-      content,
+      content: sanitizedContent,
       is_encrypted: false,
       status: "sent",
+    }
+
+    if (reply_to_id) {
+      messageData.reply_to_id = reply_to_id
     }
 
     // Handle ephemeral messages
@@ -273,14 +324,26 @@ export async function POST(request: NextRequest) {
       messageData.expires_at = new Date(Date.now() + ttl * 1000).toISOString()
     }
 
-    const { data, error } = await supabase
-      .from("messages")
-      .insert(messageData)
-      .select()
+    // Attach idempotency key when the client provided one
+    if (idempotency_key) {
+      messageData.idempotency_key = idempotency_key
+    }
 
-    if (error) throw error
+    // --- Idempotent insert ---
+    // insertMessageIdempotent performs a pre-check for the key, then inserts.
+    // On a concurrent collision (race condition) it catches the 23505 unique
+    // violation and returns the winning row, so the client always receives a
+    // valid message object regardless of how many retries were made.
+    const { message: savedMessage, isDuplicate, error: insertError } =
+      await insertMessageIdempotent(supabase, messageData as any, "http")
 
-    return NextResponse.json({ message: data[0], success: true }, { status: 201 })
+    if (insertError || !savedMessage) {
+      throw new Error(insertError ?? "Insert returned no data")
+    }
+
+    // 200 for duplicate (idempotent replay), 201 for new creation
+    const status = isDuplicate ? 200 : 201
+    return NextResponse.json({ message: savedMessage, success: true, duplicate: isDuplicate }, { status })
   } catch (error) {
     console.error("[v0] POST /api/messages error:", error)
     return NextResponse.json({ error: "Failed to create message" }, { status: 500 })

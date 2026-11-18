@@ -5,7 +5,42 @@
  * endpoints that implement cryptographic wallet signature verification.
  */
 
-import type { Session, User } from '@supabase/supabase-js';
+/**
+ * Supabase Session type
+ */
+export interface Session {
+  access_token: string;
+  token_type: string;
+  expires_in?: number;
+  refresh_token?: string;
+  user?: User;
+}
+
+/**
+ * Supabase User type  
+ */
+export interface User {
+  id: string;
+  aud?: string;
+  email?: string;
+  email_confirmed_at?: string;
+  phone?: string;
+  confirmed_at?: string;
+  last_sign_in_at?: string;
+  app_metadata?: Record<string, unknown>;
+  user_metadata?: Record<string, unknown>;
+  identities?: Array<{
+    identity_id: string;
+    id: string;
+    user_id: string;
+    identity_data?: Record<string, unknown>;
+    provider: string;
+    created_at?: string;
+    updated_at?: string;
+  }>;
+  created_at?: string;
+  updated_at?: string;
+}
 
 /**
  * Request body for POST /api/auth/nonce

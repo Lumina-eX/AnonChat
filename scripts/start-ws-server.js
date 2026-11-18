@@ -22,6 +22,7 @@ try {
 
 // Handle graceful shutdown
 process.on("SIGINT", () => {
+  
   console.log("\nShutting down WebSocket server...")
   process.exit(0)
 })

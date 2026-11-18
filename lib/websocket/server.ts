@@ -1,6 +1,8 @@
 import WebSocket, { WebSocketServer } from "ws"
 import http from "http"
 import { randomUUID } from "crypto"
+import { validateMessage, ValidationErrorType } from "../middleware/message-validation"
+import { isValidUUID, getIdempotencyMetrics } from "../messages/idempotency"
 
 // Type definitions
 interface User {
@@ -37,6 +39,34 @@ const rooms = new Map<string, Room>()
 const userPresence = new Map<string, PresenceRecord>()
 const userConnections = new Map<string, Set<string>>()
 const presenceTimeouts = new Map<string, NodeJS.Timeout>()
+
+// ---------------------------------------------------------------------------
+// Idempotency tracking for WebSocket broadcasts
+//
+// The WebSocket server is broadcast-only (no DB writes). Idempotency here
+// prevents the same client-generated message from being re-broadcast to a
+// room when the client retransmits after a reconnection.
+//
+// Keys are stored with a TTL so the set doesn't grow unboundedly.
+// On reconnect a client should reuse the SAME idempotency_key for a pending
+// message; if the key is already in seenMessageKeys the broadcast is skipped
+// and an ack is sent back to the sender instead.
+// ---------------------------------------------------------------------------
+interface SeenKeyEntry {
+  broadcastId: string  // the UUID that was broadcast the first time
+  roomId: string
+  expiresAt: number    // unix ms
+}
+const seenMessageKeys = new Map<string, SeenKeyEntry>()
+const WS_IDEMPOTENCY_TTL_MS = 5 * 60 * 1000 // 5 minutes
+
+/** Evict expired keys — called before every new key insertion. */
+function evictExpiredKeys(): void {
+  const now = Date.now()
+  seenMessageKeys.forEach((entry, key) => {
+    if (entry.expiresAt <= now) seenMessageKeys.delete(key)
+  })
+}
 
 const HEARTBEAT_INTERVAL = 30000 // 30 seconds
 const PRESENCE_GRACE_PERIOD = 5000 // 5 seconds
@@ -77,6 +107,17 @@ export function createWebSocketServer(port: number = 3001) {
     })
   }
 
+  function removeUserFromRoom(userId: string, roomId: string) {
+    const room = rooms.get(roomId)
+    if (!room) return
+
+    room.users.forEach((clientId) => {
+      if (clients.get(clientId)?.userId === userId) {
+        room.users.delete(clientId)
+      }
+    })
+  }
+
   function setupNotificationBridge(httpServer: http.Server) {
     httpServer.on("request", (req: http.IncomingMessage, res: http.ServerResponse) => {
       if (req.method !== "POST" || req.url !== "/notify") {
@@ -102,18 +143,30 @@ export function createWebSocketServer(port: number = 3001) {
         try {
           const parsed = JSON.parse(body) as {
             userId?: string
+            event?: {
+              type?: string
+              payload?: Record<string, unknown>
+            }
             notification?: Record<string, unknown>
           }
+          const event = parsed.event ?? (parsed.notification
+            ? { type: "notification", payload: parsed.notification }
+            : null)
 
-          if (!parsed.userId || !parsed.notification) {
+          if (!parsed.userId || !event?.type || !event.payload) {
             res.writeHead(400, { "Content-Type": "application/json" })
-            res.end(JSON.stringify({ error: "userId and notification are required" }))
+            res.end(JSON.stringify({ error: "userId and event are required" }))
             return
           }
 
+          const eventGroupId = event.payload.groupId
+          if (event.type === "member_removed" && typeof eventGroupId === "string") {
+            removeUserFromRoom(parsed.userId, eventGroupId)
+          }
+
           sendToUser(parsed.userId, {
-            type: "notification",
-            payload: parsed.notification,
+            type: event.type,
+            payload: event.payload,
             timestamp: Date.now(),
           })
 
@@ -376,21 +429,121 @@ export function createWebSocketServer(port: number = 3001) {
               break
             }
 
+            // Validate message content
+            const validation = validateMessage(
+              {
+                content: message.payload.content,
+                roomId: msgRoomId,
+                // Pass idempotency_key through so validation doesn't strip it
+                ...(message.payload.idempotency_key
+                  ? { idempotency_key: message.payload.idempotency_key }
+                  : {}),
+              },
+              "websocket",
+            )
+
+            if (!validation.isValid) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: {
+                    message: validation.error?.message,
+                    type: validation.error?.type,
+                    details: validation.error?.details,
+                  },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
+            // ------------------------------------------------------------------
+            // Idempotency check (in-memory, broadcast layer)
+            //
+            // The WebSocket server does not persist to the DB — that is the
+            // HTTP handler's responsibility.  Here we deduplicate the *broadcast*
+            // so that a client reconnecting and resending a pending message does
+            // not cause other room members to see it twice.
+            // ------------------------------------------------------------------
+            const clientKey: string | undefined =
+              typeof message.payload.idempotency_key === "string"
+                ? message.payload.idempotency_key
+                : undefined
+
+            if (clientKey && isValidUUID(clientKey)) {
+              const existing = seenMessageKeys.get(clientKey)
+              if (existing && existing.expiresAt > Date.now()) {
+                // Already broadcast — send an ack back to the sender only
+                console.info(
+                  `[WebSocket][idempotency] Duplicate send_message suppressed`,
+                  {
+                    idempotency_key: clientKey,
+                    original_broadcast_id: existing.broadcastId,
+                    room_id: msgRoomId,
+                    user_id: msgUserId,
+                    metrics: getIdempotencyMetrics(),
+                  },
+                )
+                ws.send(
+                  JSON.stringify({
+                    type: "message_ack",
+                    payload: {
+                      idempotency_key: clientKey,
+                      message_id: existing.broadcastId,
+                      duplicate: true,
+                    },
+                    timestamp: Date.now(),
+                  }),
+                )
+                break
+              }
+            }
+
+            // Generate a stable broadcast ID for this message
+            const broadcastId = randomUUID()
+
+            // Register the key before broadcasting so concurrent sends from the
+            // same client (e.g., multi-tab) are also caught.
+            if (clientKey && isValidUUID(clientKey)) {
+              evictExpiredKeys()
+              seenMessageKeys.set(clientKey, {
+                broadcastId,
+                roomId: msgRoomId,
+                expiresAt: Date.now() + WS_IDEMPOTENCY_TTL_MS,
+              })
+            }
+
             const broadcastMessage = {
               type: "message",
               payload: {
-                id: randomUUID(),
+                id: broadcastId,
                 roomId: msgRoomId,
                 userId: msgUserId,
                 displayName: connection.user?.displayName,
                 avatarUrl: connection.user?.avatarUrl,
-                content: message.payload.content,
+                content: validation.sanitized?.content || message.payload.content,
+                // Surface the key so clients can correlate the broadcast with
+                // their own pending-message state
+                idempotency_key: clientKey ?? null,
                 createdAt: Date.now(),
               },
               timestamp: Date.now(),
             }
 
             broadcastToRoom(msgRoomId, broadcastMessage)
+
+            // Send an ack to the original sender confirming delivery
+            ws.send(
+              JSON.stringify({
+                type: "message_ack",
+                payload: {
+                  idempotency_key: clientKey ?? null,
+                  message_id: broadcastId,
+                  duplicate: false,
+                },
+                timestamp: Date.now(),
+              }),
+            )
             break
           }
 
@@ -429,13 +582,34 @@ export function createWebSocketServer(port: number = 3001) {
               break
             }
 
+            // Validate message content for edits
+            const validation = validateMessage(
+              { content: editContent, id: editMessageId, roomId: editRoomId },
+              'websocket'
+            )
+
+            if (!validation.isValid) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  payload: {
+                    message: validation.error?.message,
+                    type: validation.error?.type,
+                    details: validation.error?.details,
+                  },
+                  timestamp: Date.now(),
+                }),
+              )
+              break
+            }
+
             broadcastToRoom(editRoomId, {
               type: "message_edit",
               payload: {
                 messageId: editMessageId,
                 userId: editAuthorId,
                 roomId: editRoomId,
-                content: editContent,
+                content: validation.sanitized?.content || editContent,
                 editedAt: Date.now(),
               },
               timestamp: Date.now(),

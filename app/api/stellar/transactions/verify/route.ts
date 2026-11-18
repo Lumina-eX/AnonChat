@@ -5,6 +5,7 @@ import {
   verifyStellarTransaction,
 } from "@/lib/blockchain/transaction-verification";
 import { getTransactionExplorerUrl } from "@/lib/blockchain/stellar-service";
+import type { SupabaseClientLike } from "@/lib/blockchain/stellar-service";
 
 type VerificationRequestBody = {
   transactionHash?: string;
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest) {
     }
 
     const verification = await verifyStellarTransaction({
-      supabase,
+      supabase: supabase as unknown as SupabaseClientLike,
       transactionHash,
       groupActionEventId: body.groupActionEventId ?? null,
       groupId: body.groupId ?? null,

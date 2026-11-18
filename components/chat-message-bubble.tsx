@@ -1,11 +1,18 @@
 import React, { useState } from "react";
 import { cn } from "@/lib/utils";
 import { highlightText } from "@/lib/highlight-text";
-import { Pin } from "lucide-react";
+import { Pin, Reply } from "lucide-react";
 
 export type Reaction = {
   emoji: string;
   userIds: string[];
+};
+
+export type ReplyToInfo = {
+  id: string;
+  text: string;
+  sender?: string;
+  isDeleted?: boolean;
 };
 
 export type ChatMessage = {
@@ -16,6 +23,8 @@ export type ChatMessage = {
   status: "sending" | "sent" | "delivered" | "read";
   isPinned?: boolean;
   reactions?: Reaction[];
+  replyTo?: ReplyToInfo | null;
+  senderName?: string;
 };
 
 interface ChatMessageBubbleProps {
@@ -27,6 +36,8 @@ interface ChatMessageBubbleProps {
   isHighlighted?: boolean;
   currentUserId?: string;
   onReact?: (messageId: string, emoji: string) => void;
+  onReply?: (message: ChatMessage) => void;
+  onJumpToMessage?: (messageId: string) => void;
 }
 
 // A lightweight set of emojis for quick reactions
@@ -41,6 +52,8 @@ export function ChatMessageBubble({
   isHighlighted = false,
   currentUserId = "me",
   onReact,
+  onReply,
+  onJumpToMessage,
 }: ChatMessageBubbleProps) {
   const isMe = message.author === "me";
   const [showPicker, setShowPicker] = useState(false);
@@ -59,10 +72,10 @@ export function ChatMessageBubble({
         isMe ? "items-end ml-auto" : "items-start mr-auto"
       )}
     >
-      {/* Emoji Picker (Hover effect) */}
+      {/* Message Actions (Hover / Focus effect) */}
       <div
         className={cn(
-          "absolute -top-10 z-10 flex items-center gap-0.5 p-1 bg-popover border border-border rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity duration-200",
+          "absolute -top-10 z-10 flex items-center gap-1 p-1 bg-popover border border-border rounded-full shadow-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-200",
           isMe ? "right-2" : "left-2"
         )}
       >
@@ -76,6 +89,22 @@ export function ChatMessageBubble({
             {emoji}
           </button>
         ))}
+
+        {onReply && (
+          <>
+            <div className="h-4 w-px bg-border/80 mx-0.5" />
+            <button
+              type="button"
+              onClick={() => onReply(message)}
+              className="p-1 px-1.5 hover:bg-muted rounded-full text-xs text-muted-foreground hover:text-foreground transition-all flex items-center gap-1"
+              title="Reply to message"
+              aria-label="Reply to message"
+            >
+              <Reply className="h-3.5 w-3.5" />
+              <span className="text-[11px] font-medium hidden sm:inline">Reply</span>
+            </button>
+          </>
+        )}
       </div>
 
       {/* Message Bubble */}
@@ -93,6 +122,49 @@ export function ChatMessageBubble({
           <div className="flex items-center gap-1 text-[10px] font-semibold mb-1 opacity-90 text-primary">
             <Pin className="h-3 w-3 rotate-45" />
             <span>Pinned</span>
+          </div>
+        )}
+
+        {/* Quoted Message in Reply */}
+        {message.replyTo && (
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              onJumpToMessage?.(message.replyTo!.id);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onJumpToMessage?.(message.replyTo!.id);
+              }
+            }}
+            className={cn(
+              "mb-2 rounded-lg border-l-2 py-1.5 px-2.5 text-xs cursor-pointer transition-all duration-150 select-none text-left",
+              isMe
+                ? "bg-primary-foreground/15 border-primary-foreground/70 hover:bg-primary-foreground/25 text-primary-foreground"
+                : "bg-muted/80 border-primary hover:bg-muted text-foreground"
+            )}
+            title="Click to jump to original message"
+            aria-label={`Replying to ${message.replyTo.sender || "message"}: ${message.replyTo.text}`}
+          >
+            <div className="flex items-center gap-1 font-semibold text-[11px] opacity-90 mb-0.5">
+              <Reply className="h-3 w-3 inline-block shrink-0" />
+              <span className="truncate max-w-[200px]">
+                {message.replyTo.sender || "Replying to message"}
+              </span>
+            </div>
+            <p
+              className={cn(
+                "line-clamp-2 text-[11px] break-words",
+                message.replyTo.isDeleted ? "italic opacity-60" : "opacity-85"
+              )}
+            >
+              {message.replyTo.isDeleted
+                ? "Original message was deleted"
+                : message.replyTo.text || "Original message"}
+            </p>
           </div>
         )}
 

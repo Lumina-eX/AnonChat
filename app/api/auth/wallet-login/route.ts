@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { deterministicPassword } from "@/lib/auth/password";
 import { validateWalletAddressWithMessage } from "@/lib/auth/validation";
 import { buildWalletAuthResponse } from "@/lib/auth/wallet-token-response";
+import { createSession } from "@/lib/auth/session-store";
 
 /**
  * POST /api/auth/wallet-login
@@ -76,6 +77,11 @@ export async function POST(request: NextRequest) {
     if (!signInError && signInData.session) {
       console.log(`[wallet-auth] /api/auth/wallet-login successful sign-in for wallet: ${walletAddress.substring(0, 8)}...`);
       const sigVerifiedAt = Math.floor(Date.now() / 1000);
+      const sessionId = await createSession({
+        walletAddress,
+        userAgent: request.headers.get("user-agent") ?? undefined,
+        ipAddress: request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip") ?? undefined,
+      });
       return buildWalletAuthResponse(
         walletAddress,
         {
@@ -83,9 +89,11 @@ export async function POST(request: NextRequest) {
           user: signInData.user,
           walletAddress,
           isNewUser: false,
+          sessionId,
         },
         200,
         sigVerifiedAt,
+        sessionId,
       );
     }
 
@@ -116,6 +124,11 @@ export async function POST(request: NextRequest) {
 
     console.log(`[wallet-auth] /api/auth/wallet-login successful sign-up for wallet: ${walletAddress.substring(0, 8)}...`);
     const sigVerifiedAt = Math.floor(Date.now() / 1000);
+    const sessionId = await createSession({
+      walletAddress,
+      userAgent: request.headers.get("user-agent") ?? undefined,
+      ipAddress: request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip") ?? undefined,
+    });
     return buildWalletAuthResponse(
       walletAddress,
       {
@@ -123,9 +136,11 @@ export async function POST(request: NextRequest) {
         user: signUpData.user,
         walletAddress,
         isNewUser: true,
+        sessionId,
       },
       201,
       sigVerifiedAt,
+      sessionId,
     );
   } catch (err: any) {
     console.error("[wallet-auth] /api/auth/wallet-login error:", err);

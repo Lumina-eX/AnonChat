@@ -39,6 +39,13 @@ export class WebSocketClient {
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
+        // Skip connection if URL is empty or localhost (not in production)
+        if (!this.url || this.url === "ws://localhost:3001") {
+          console.warn("WebSocket URL not configured, skipping connection");
+          this.setConnectionState("disconnected");
+          return resolve();
+        }
+
         if (
           this.connectionState === "connecting" ||
           this.connectionState === "connected"
@@ -283,8 +290,7 @@ export class WebSocketClient {
 let instance: WebSocketClient | null = null;
 export function getWebSocketClient(url?: string): WebSocketClient {
   if (!instance) {
-    const wsUrl =
-      url || process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:3001";
+    const wsUrl = url || process.env.NEXT_PUBLIC_WS_URL || "";
     instance = new WebSocketClient(wsUrl);
   }
   return instance;

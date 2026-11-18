@@ -185,7 +185,10 @@ export async function POST(
     const body: AssignRoleBody = await request.json().catch(() => ({}))
 
     // Verify wallet signature for authorization
-    const auth = await verifyWalletAuthorization(body, "assign_role")
+    const auth = await verifyWalletAuthorization(body, "assign_role", {
+      supabase,
+      groupId,
+    })
     if (!auth.ok) {
       return auth.response
     }
@@ -399,7 +402,10 @@ export async function DELETE(
     const body: RevokeRoleBody = await request.json().catch(() => ({}))
 
     // Verify wallet signature for authorization
-    const auth = await verifyWalletAuthorization(body, "revoke_role")
+    const auth = await verifyWalletAuthorization(body, "revoke_role", {
+      supabase,
+      groupId,
+    })
     if (!auth.ok) {
       return auth.response
     }

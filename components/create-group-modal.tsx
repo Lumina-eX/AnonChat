@@ -2,13 +2,27 @@
 
 import React, { useState, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X, Users, Loader2, Info } from "lucide-react";
+import { X, Users, Loader2, Info, AlertCircle, RefreshCw, CheckCircle2, Clock } from "lucide-react";
 import { getPublicKey, connect, detectWalletNetwork, getExpectedNetwork } from "@/app/stellar-wallet-kit";
 import { toast } from "react-hot-toast";
 import { trackActivity } from "@/lib/reputation";
 import { shortenWalletAddress } from "@/lib/utils";
 import { WalletAddress } from "@/components/wallet-address";
 import { handleAppError } from "@/lib/error-handler";
+
+type BlockchainStatus = "pending" | "submitted" | "failed" | "retrying";
+
+interface BlockchainAttempt {
+  id: string;
+  submissionType: string;
+  status: string;
+  attemptCount: number;
+  maxAttempts: number;
+  lastError: string | null;
+  lastErrorType: string | null;
+  nextRetryAt: string | null;
+  createdAt: string;
+}
 
 export function CreateGroupModal() {
   const [isOpen, setIsOpen] = useState(false);
@@ -17,6 +31,13 @@ export function CreateGroupModal() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [networkFee, setNetworkFee] = useState<string | null>(null);
   const [isFetchingFee, setIsFetchingFee] = useState(false);
+
+  // Blockchain status tracking
+  const [blockchainStatus, setBlockchainStatus] = useState<BlockchainStatus | null>(null);
+  const [blockchainError, setBlockchainError] = useState<string | null>(null);
+  const [attemptId, setAttemptId] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [retryableAttempts, setRetryableAttempts] = useState<BlockchainAttempt[]>([]);
 
   useEffect(() => {
     async function checkWallet() {
@@ -63,6 +84,48 @@ export function CreateGroupModal() {
     }
   };
 
+  const handleRetryBlockchain = async () => {
+    if (!attemptId) {
+      toast.error("No transaction attempt to retry");
+      return;
+    }
+
+    setIsRetrying(true);
+    setBlockchainStatus("retrying");
+
+    try {
+      // Extract groupId from the last created room (stored in attemptId context)
+      const roomId = localStorage.getItem("last_created_room_id");
+      if (!roomId) {
+        throw new Error("Room ID not found");
+      }
+
+      const res = await fetch(`/api/stellar/transactions/retry/${roomId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attemptId }),
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        setBlockchainStatus("submitted");
+        setBlockchainError(null);
+        toast.success("Transaction submitted successfully!");
+      } else {
+        setBlockchainStatus("failed");
+        setBlockchainError(data.error || "Retry failed");
+        toast.error(`Retry failed: ${data.error}`);
+      }
+    } catch (error: any) {
+      setBlockchainStatus("failed");
+      setBlockchainError(error.message || "Retry failed");
+      toast.error(`Retry failed: ${error.message}`);
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -85,11 +148,14 @@ export function CreateGroupModal() {
     }
 
     setIsSubmitting(true);
+    setBlockchainStatus("pending");
+    setBlockchainError(null);
+    setAttemptId(null);
 
     try {
       const shortenedAddress = shortenWalletAddress(publicKey);
 
-      // Create the room using the real API explicitly since backend is set up
+      // Create the room using the real API
       const res = await fetch("/api/rooms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -123,16 +189,38 @@ export function CreateGroupModal() {
         window.dispatchEvent(new CustomEvent("roomCreated", { detail: newRoom }));
       }
 
-      if (blockchain?.feeCharged) {
-        const xlmFee = (Number(blockchain.feeCharged) / 1e7).toFixed(7);
-        toast.success(`Group "${groupName}" created successfully! Network charged: ${xlmFee} XLM.`);
+      // Handle blockchain status
+      if (blockchain?.submitted) {
+        setBlockchainStatus("submitted");
+        if (blockchain.feeCharged) {
+          const xlmFee = (Number(blockchain.feeCharged) / 1e7).toFixed(7);
+          toast.success(`Group "${groupName}" created! Network fee: ${xlmFee} XLM`);
+        } else {
+          toast.success(`Group "${groupName}" created successfully!`);
+        }
+        setGroupName("");
+        setIsOpen(false);
       } else {
-        toast.success(`Group "${groupName}" created successfully!`);
+        // Blockchain submission failed
+        setBlockchainStatus("failed");
+        setBlockchainError(blockchain?.error || "Blockchain submission failed");
+        setAttemptId(blockchain?.attemptId || null);
+
+        // Store room ID for retry
+        if (room?.id) {
+          localStorage.setItem("last_created_room_id", room.id);
+        }
+
+        toast.error(
+          `Group created but blockchain submission failed. You can retry from the room settings.`,
+          { duration: 6000 }
+        );
+
+        // Don't close modal - show retry option
       }
-      setGroupName("");
-      setIsOpen(false);
     } catch (error) {
       console.error(error);
+      setBlockchainStatus(null);
       toast.error("Failed to create group. Please try again.");
     } finally {
       setIsSubmitting(false);
@@ -143,6 +231,68 @@ export function CreateGroupModal() {
     if (!stroops) return "Calculating...";
     const xlm = Number(stroops) / 1e7;
     return `${xlm.toFixed(7)} XLM`;
+  };
+
+  const renderBlockchainStatus = () => {
+    if (!blockchainStatus) return null;
+
+    switch (blockchainStatus) {
+      case "pending":
+        return (
+          <div className="rounded-lg bg-blue-500/10 border border-blue-500/30 p-3 flex items-center gap-2">
+            <Clock className="h-4 w-4 text-blue-400 animate-pulse" />
+            <span className="text-sm text-blue-300">Submitting to Stellar network...</span>
+          </div>
+        );
+      case "submitted":
+        return (
+          <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-3 flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+            <span className="text-sm text-emerald-300">Successfully anchored on Stellar!</span>
+          </div>
+        );
+      case "retrying":
+        return (
+          <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 flex items-center gap-2">
+            <Loader2 className="h-4 w-4 text-amber-400 animate-spin" />
+            <span className="text-sm text-amber-300">Retrying blockchain submission...</span>
+          </div>
+        );
+      case "failed":
+        return (
+          <div className="rounded-lg bg-destructive/10 border border-destructive/30 p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 text-destructive" />
+              <span className="text-sm text-destructive font-medium">Blockchain submission failed</span>
+            </div>
+            {blockchainError && (
+              <p className="text-xs text-destructive/80">{blockchainError}</p>
+            )}
+            {attemptId && (
+              <button
+                type="button"
+                onClick={handleRetryBlockchain}
+                disabled={isRetrying}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-destructive/20 hover:bg-destructive/30 px-3 py-1.5 text-xs font-medium transition disabled:opacity-50"
+              >
+                {isRetrying ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Retrying...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3 w-3" />
+                    Retry Blockchain Submission
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        );
+      default:
+        return null;
+    }
   };
 
   return (
@@ -228,7 +378,25 @@ export function CreateGroupModal() {
                 </div>
               </div>
 
+              {/* Blockchain Status Display */}
+              {renderBlockchainStatus()}
+
               <div className="pt-4 flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2">
+                {blockchainStatus === "failed" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBlockchainStatus(null);
+                      setBlockchainError(null);
+                      setAttemptId(null);
+                      setGroupName("");
+                      setIsOpen(false);
+                    }}
+                    className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border border-border bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2"
+                  >
+                    Close Without Retry
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={isSubmitting || !networkFee}

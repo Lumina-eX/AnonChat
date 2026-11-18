@@ -69,7 +69,10 @@ export async function POST(
 
     const body: InviteBody = await request.json().catch(() => ({}))
 
-    const auth = await verifyWalletAuthorization(body, "regenerate_invite")
+    const auth = await verifyWalletAuthorization(body, "regenerate_invite", {
+      supabase,
+      groupId,
+    })
     if (!auth.ok) {
       return auth.response
     }

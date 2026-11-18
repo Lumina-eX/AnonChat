@@ -4,6 +4,7 @@ import { computeHash } from "@/lib/blockchain/metadata-hash";
 import {
   submitMetadataHash,
   getTransactionExplorerUrl,
+  generateIdempotencyKey,
 } from "@/lib/blockchain/stellar-service";
 import { GroupMetadata } from "@/types/blockchain";
 import {
@@ -19,6 +20,7 @@ import { getTransaction } from "@/lib/blockchain/stellar-service";
 import { insertRoomActivity } from "@/lib/activity/room-activity";
 import { type SupabaseClient } from "@supabase/supabase-js";
 import { persistGroupTransactionMemo } from "@/lib/blockchain/memo-store";
+import { createHash } from "crypto";
 
 export async function GET(request: NextRequest) {
   try {
@@ -101,7 +103,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, description, is_private, max_fee } = body;
+    const { name, description, is_private, max_fee, idempotency_key } = body;
 
     if (!name) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
@@ -164,26 +166,48 @@ export async function POST(request: NextRequest) {
     // Compute metadata hash
     const metadataHash = computeHash(metadata);
 
+    // Generate idempotency key (client-provided or deterministic)
+    const finalIdempotencyKey = idempotency_key || generateIdempotencyKey(
+      room.id,
+      "metadata_hash",
+      metadataHash
+    );
+
     logBlockchainOperation(
       "info",
       "Group created, initiating blockchain submission",
       {
         groupId: room.id,
         metadataHash,
+        idempotencyKey: finalIdempotencyKey,
       },
       correlationId,
     );
 
-    // Submit to blockchain (non-blocking, graceful degradation)
+    // Submit to blockchain with idempotency and retry (non-blocking, graceful degradation)
     let stellarTxHash: string | null = null;
     let blockchainSubmitted = false;
     let explorerUrl: string | null = null;
     let actualFeeCharged: string | null = null;
     let memoGroupId: string | null = null;
     let auditEvent = null;
+    let blockchainError: string | null = null;
+    let isDuplicate = false;
+    let attemptId: string | null = null;
 
     try {
-      const result = await submitMetadataHash(room.id, metadataHash, max_fee);
+      const result = await submitMetadataHash(
+        room.id,
+        metadataHash,
+        max_fee,
+        {
+          supabase: supabase as any,
+          idempotencyKey: finalIdempotencyKey,
+        }
+      );
+
+      isDuplicate = result.isDuplicate ?? false;
+      attemptId = result.attemptId ?? null;
 
       if (result.success && result.transactionHash) {
         stellarTxHash = result.transactionHash;
@@ -240,6 +264,7 @@ export async function POST(request: NextRequest) {
             groupId: room.id,
             transactionHash: stellarTxHash,
             memoGroupId: result.memoGroupId,
+            isDuplicate,
           },
           correlationId,
         );
@@ -276,19 +301,21 @@ export async function POST(request: NextRequest) {
           );
         }
       } else {
+        blockchainError = result.error || "Blockchain submission failed";
         logBlockchainOperation(
           "warn",
           "Blockchain submission failed, continuing without it",
           {
             groupId: room.id,
-            error: result.error
-              ? { type: "BlockchainError", message: result.error }
-              : undefined,
+            error: { type: "BlockchainError", message: blockchainError },
+            attemptId,
+            isDuplicate,
           },
           correlationId,
         );
       }
-    } catch (blockchainError: any) {
+    } catch (blockchainErrorObj: any) {
+      blockchainError = blockchainErrorObj.message || "Unknown blockchain error";
       // Log error but don't fail the request
       logBlockchainOperation(
         "error",
@@ -296,8 +323,8 @@ export async function POST(request: NextRequest) {
         {
           groupId: room.id,
           error: {
-            type: blockchainError.name || "UnknownError",
-            message: blockchainError.message || "Unknown error",
+            type: blockchainErrorObj.name || "UnknownError",
+            message: blockchainErrorObj.message || "Unknown error",
           },
         },
         correlationId,
@@ -336,6 +363,9 @@ export async function POST(request: NextRequest) {
           feeCharged: actualFeeCharged || undefined,
           explorerUrl: explorerUrl || undefined,
           memoGroupId: memoGroupId || undefined,
+          error: blockchainError,
+          isDuplicate,
+          attemptId,
         },
         audit: auditEvent || undefined,
       },

@@ -1,27 +1,17 @@
 import { createHash, randomUUID } from "crypto";
 import type { AuditEventType } from "@/types/blockchain";
-import { submitAuditEvent } from "@/lib/blockchain/stellar-service";
+import {
+  submitAuditEvent,
+  generateIdempotencyKey,
+} from "@/lib/blockchain/stellar-service";
 import { getExplorerUrl, loadStellarConfig } from "@/lib/blockchain/stellar-config";
 import { logBlockchainOperation, generateCorrelationId } from "@/lib/blockchain/logger";
 import { verifyStellarTransaction } from "@/lib/blockchain/transaction-verification";
 
-type SupabaseErrorLike = { message: string };
-type SupabaseMutationResult = PromiseLike<{ error: SupabaseErrorLike | null }>;
-type SupabaseUpdateBuilder = {
-  eq: (column: string, value: string) => SupabaseMutationResult | any;
-};
-type SupabaseTableLike = {
-  insert: (values: Record<string, unknown>) => SupabaseMutationResult | any;
-  update: (values: Record<string, unknown>) => SupabaseUpdateBuilder;
-};
-type SupabaseClientLike = {
-  from: (table: string) => SupabaseTableLike;
-};
-
 type AuditStatus = "pending" | "submitted" | "failed";
 
 export type RecordAuditEventInput = {
-  supabase: SupabaseClientLike;
+  supabase: any;
   groupId: string;
   eventType: AuditEventType;
   actorUserId?: string | null;
@@ -94,6 +84,9 @@ export async function recordGroupAuditEvent({
   };
   const metadataHash = computeAuditMetadataHash(eventMetadata);
 
+  // Generate idempotency key for this audit event
+  const idempotencyKey = generateIdempotencyKey(groupId, "audit_event", `${eventId}:${metadataHash}`);
+
   const { error: insertError } = await supabase
     .from("group_audit_events")
     .insert({
@@ -121,7 +114,37 @@ export async function recordGroupAuditEvent({
     return null;
   }
 
-  const result = await submitAuditEvent(groupId, eventId, eventType, metadataHash, maxFee);
+  // Submit with idempotency and retry logic
+  const result = await submitAuditEvent(
+    groupId,
+    eventId,
+    eventType,
+    metadataHash,
+    maxFee,
+    {
+      supabase,
+      idempotencyKey,
+    }
+  );
+
+  // Handle duplicate detection
+  if (result.isDuplicate) {
+    logBlockchainOperation("info", "Duplicate audit event detected, using existing result", {
+      groupId,
+      eventId,
+      eventType,
+      existingTxHash: result.transactionHash,
+    }, correlationId);
+
+    return {
+      eventId,
+      eventType,
+      transactionHash: result.transactionHash ?? null,
+      status: result.success ? "submitted" : "failed",
+      explorerUrl: getAuditExplorerUrl(result.transactionHash ?? null),
+      error: result.error ?? null,
+    };
+  }
 
   if (result.success && result.transactionHash) {
     const verification = await verifyStellarTransaction({

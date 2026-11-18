@@ -64,7 +64,10 @@ export async function DELETE(
 
     const body: DeleteGroupBody = await request.json().catch(() => ({}));
 
-    const auth = await verifyWalletAuthorization(body, "delete_group");
+    const auth = await verifyWalletAuthorization(body, "delete_group", {
+      supabase,
+      groupId,
+    });
     if (!auth.ok) {
       return auth.response;
     }

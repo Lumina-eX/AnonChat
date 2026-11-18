@@ -126,7 +126,10 @@ export async function POST(
     }
 
     // Verify wallet ownership via nonce + signature
-    const auth = await verifyWalletAuthorization(body, `multisig_owners_${action}`);
+    const auth = await verifyWalletAuthorization(body, `multisig_owners_${action}`, {
+      supabase,
+      groupId,
+    });
     if (!auth.ok) return auth.response;
 
     // Ensure the signing wallet belongs to the authenticated user

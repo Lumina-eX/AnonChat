@@ -1,19 +1,17 @@
 import { createClient } from "@/lib/supabase/server"
 import { type NextRequest, NextResponse } from "next/server"
 import { recordGroupAuditEvent } from "@/lib/blockchain/audit"
-import { getOrCreateUserAlias } from "@/lib/groups/nicknameGenerator"
+import {
+  paginateGroupMembers,
+  verifyGroupMemberAccess,
+  type SortField,
+  type SortOrder,
+} from "@/lib/groups/members-pagination"
 
-type MemberRow = {
-  user_id: string
-  joined_at: string
-}
-
-type ProfileRow = {
-  id: string
-  display_name: string | null
-  username: string | null
-  wallet_address: string | null
-  avatar_url: string | null
+function parseOptionalInt(value: string | null): number | undefined {
+  if (value === null || value.trim() === "") return undefined
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) ? parsed : NaN
 }
 
 export async function GET(
@@ -34,51 +32,57 @@ export async function GET(
       return NextResponse.json({ error: "roomId is required" }, { status: 400 })
     }
 
-    const { data: members, error } = await supabase
-      .from("room_members")
-      .select("user_id, joined_at, removed_at")
-      .eq("room_id", roomId)
-      .is("removed_at", null)
-      .order("joined_at", { ascending: true })
-
-    if (error) throw error
-
-    const memberIds = (members ?? []).map((member) => member.user_id)
-    let profiles: ProfileRow[] = []
-    let profilesError: unknown = null
-
-    if (memberIds.length) {
-      const profileResult = await supabase
-        .from("profiles")
-        .select("id, display_name, username, wallet_address, avatar_url")
-        .in("id", memberIds)
-
-      profiles = (profileResult.data ?? []) as ProfileRow[]
-      profilesError = profileResult.error
+    // 1. Strict Access Control Check
+    const accessCheck = await verifyGroupMemberAccess(supabase, roomId, user.id)
+    if (!accessCheck.authorized) {
+      if (accessCheck.reason === "not_found") {
+        return NextResponse.json({ error: "Room not found" }, { status: 404 })
+      }
+      return NextResponse.json(
+        { error: "Unauthorized: You are not a member of this group" },
+        { status: 403 }
+      )
     }
 
-    if (profilesError) {
-      console.warn("[rooms/members] profile lookup failed:", profilesError)
+    // 2. Parse Query Parameters
+    const { searchParams } = new URL(request.url)
+    const limitParam = searchParams.get("limit")
+    const offsetParam = searchParams.get("offset")
+    const pageParam = searchParams.get("page")
+    const cursor = searchParams.get("cursor") || undefined
+    const sortBy = (searchParams.get("sortBy") || "joinDate") as SortField
+    const sortOrder = (searchParams.get("sortOrder") || searchParams.get("order") || "asc") as SortOrder
+
+    const limit = parseOptionalInt(limitParam)
+    const offset = parseOptionalInt(offsetParam)
+    const page = parseOptionalInt(pageParam)
+
+    if (Number.isNaN(limit) || Number.isNaN(offset) || Number.isNaN(page)) {
+      return NextResponse.json(
+        { error: "limit, offset, and page must be valid integers" },
+        { status: 400 }
+      )
     }
 
-    const profileById = new Map(profiles.map((profile) => [profile.id, profile] as const))
-
-    return NextResponse.json({
-      members: ((members ?? []) as MemberRow[]).map((m) => ({
-        user_id: m.user_id,
-        joined_at: m.joined_at,
-        is_current_user: m.user_id === user.id,
-        display_name:
-          profileById.get(m.user_id)?.display_name ??
-          profileById.get(m.user_id)?.username ??
-          null,
-        wallet_address: profileById.get(m.user_id)?.wallet_address ?? null,
-        avatar_url: profileById.get(m.user_id)?.avatar_url ?? null,
-      })),
+    // 3. Paginate Group Members
+    const paginationResult = await paginateGroupMembers(supabase, {
+      roomId,
+      currentUserId: user.id,
+      limit,
+      offset,
+      page,
+      cursor,
+      sortBy,
+      sortOrder,
     })
-  } catch (error) {
+
+    return NextResponse.json(paginationResult, { status: 200 })
+  } catch (error: any) {
     console.error("[rooms/members] GET error:", error)
-    return NextResponse.json({ error: "Failed to fetch members" }, { status: 500 })
+    return NextResponse.json(
+      { error: error?.message || "Failed to fetch members" },
+      { status: 500 }
+    )
   }
 }
 
