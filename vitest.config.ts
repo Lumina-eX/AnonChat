@@ -7,6 +7,7 @@ export default defineConfig({
     include: [
       "lib/blockchain/group-verification.test.ts",
       "lib/blockchain/transaction-verification.test.ts",
+      "lib/blockchain/transaction-audit-verification.test.ts",
       "lib/utils/stellar-address.test.ts",
       "components/GroupVerificationBadge.test.tsx",
       "tests/group-roles.test.ts",
