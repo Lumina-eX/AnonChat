@@ -23,6 +23,7 @@ export default defineConfig({
       "tests/wallet-balance.test.ts",
       "tests/group-message-statistics.test.ts",
       "tests/stellar-transaction-state-machine.test.ts",
+      "tests/stellar-transaction-utilities.test.ts",
     ],
     globals: false,
   },
