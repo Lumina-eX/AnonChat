@@ -201,6 +201,110 @@ export async function PUT(request: NextRequest) {
   }
 }
 
+export async function DELETE(request: NextRequest) {
+  try {
+    const supabase = await createClient()
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    let body: unknown
+    try {
+      body = await request.json()
+    } catch {
+      return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 })
+    }
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "A JSON object is required" }, { status: 400 })
+    }
+
+    const { room_id, message_ids } = body as {
+      room_id?: unknown
+      message_ids?: unknown
+    }
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+    if (
+      typeof room_id !== "string" ||
+      !uuidPattern.test(room_id) ||
+      !Array.isArray(message_ids) ||
+      message_ids.length === 0 ||
+      message_ids.length > 500 ||
+      message_ids.some((id) => typeof id !== "string" || !uuidPattern.test(id))
+    ) {
+      return NextResponse.json(
+        { error: "A valid room_id and between 1 and 500 message_ids are required" },
+        { status: 400 },
+      )
+    }
+
+    const messageIds = [
+      ...new Set(
+        message_ids.filter((id): id is string => typeof id === "string"),
+      ),
+    ]
+    const { data: membership, error: memberError } = await supabase
+      .from("room_members")
+      .select("id, removed_at")
+      .eq("room_id", room_id)
+      .eq("user_id", user.id)
+      .maybeSingle()
+
+    if (memberError) throw memberError
+    if (!membership || membership.removed_at) {
+      return NextResponse.json({ error: "You are not an active member of this room" }, { status: 403 })
+    }
+
+    const { data: messagesToDelete, error: fetchError } = await supabase
+      .from("messages")
+      .select("id, user_id")
+      .eq("room_id", room_id)
+      .in("id", messageIds)
+
+    if (fetchError) throw fetchError
+    if (
+      !messagesToDelete ||
+      messagesToDelete.length !== messageIds.length ||
+      messagesToDelete.some((message: { user_id: string }) => message.user_id !== user.id)
+    ) {
+      return NextResponse.json(
+        { error: "Only your own messages can be deleted" },
+        { status: 403 },
+      )
+    }
+
+    const { data: deletedMessages, error: deleteError } = await supabase
+      .from("messages")
+      .delete()
+      .eq("room_id", room_id)
+      .eq("user_id", user.id)
+      .in("id", messageIds)
+      .select("id")
+
+    if (deleteError) throw deleteError
+    if (!deletedMessages || deletedMessages.length !== messageIds.length) {
+      return NextResponse.json(
+        { error: "Some messages could not be deleted. Refresh the conversation and try again." },
+        { status: 409 },
+      )
+    }
+
+    return NextResponse.json({
+      success: true,
+      deleted_count: deletedMessages.length,
+      deleted_ids: deletedMessages.map((message: { id: string }) => message.id),
+    })
+  } catch (error) {
+    console.error("[v0] DELETE /api/messages error:", error)
+    return NextResponse.json({ error: "Failed to delete selected messages" }, { status: 500 })
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
