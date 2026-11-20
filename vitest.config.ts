@@ -10,6 +10,7 @@ export default defineConfig({
       "lib/blockchain/transaction-receipts.test.ts",
       "lib/utils/stellar-address.test.ts",
       "components/GroupVerificationBadge.test.tsx",
+      "components/invite-members-dialog.test.tsx",
       "components/chat-message-bubble.test.tsx",
       "components/MessageItem.test.tsx",
       "src/components/MessageInput.test.tsx",
