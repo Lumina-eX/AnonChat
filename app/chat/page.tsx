@@ -51,12 +51,16 @@ import {
   Pin,
   ChevronLeft,
   ChevronRight,
+  CheckSquare,
+  Copy,
+  Trash2,
   X,
   ShieldCheck,
   Reply,
 } from "lucide-react";
 import { StellarNetworkStatus } from "@/components/stellar-network-status";
 import { WalletNetworkWarning } from "@/components/wallet-network-warning";
+import toast from "react-hot-toast";
 
 type ChatPreview = {
   id: string;
@@ -133,6 +137,12 @@ function ChatPageInner() {
   const [currentUser, setCurrentUser] = useState<{ id: string } | null>(null);
   const [isLoadingRooms, setIsLoadingRooms] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [isDeletingSelectedMessages, setIsDeletingSelectedMessages] =
+    useState(false);
 
   // Message search state
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
@@ -320,6 +330,7 @@ function ChatPageInner() {
       return {
         id: message.id,
         author: message.user_id === currentUser?.id ? "me" : "them",
+        userId: message.user_id,
         text: message.content,
         time: new Date(message.created_at).toLocaleTimeString([], {
           hour: "2-digit",
@@ -845,6 +856,116 @@ function ChatPageInner() {
   );
 
   const messages = selectedChat ? messagesByChat[selectedChat.id] || [] : [];
+  const selectedMessages = useMemo(
+    () => messages.filter((message) => selectedMessageIds.has(message.id)),
+    [messages, selectedMessageIds],
+  );
+  const deletableSelectedMessages = useMemo(
+    () =>
+      selectedMessages.filter(
+        (message) =>
+          message.userId === currentUser?.id && !message.id.startsWith("temp_"),
+      ),
+    [selectedMessages, currentUser?.id],
+  );
+
+  useEffect(() => {
+    setIsSelectionMode(false);
+    setSelectedMessageIds(new Set());
+  }, [selectedChatId]);
+
+  const handleToggleMessageSelection = useCallback((messageId: string) => {
+    setSelectedMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) next.delete(messageId);
+      else next.add(messageId);
+      return next;
+    });
+  }, []);
+
+  const handleToggleSelectionMode = useCallback(() => {
+    setSelectedMessageIds(new Set());
+    setIsSelectionMode((enabled) => !enabled);
+  }, []);
+
+  const handleClearMessageSelection = useCallback(() => {
+    setSelectedMessageIds(new Set());
+  }, []);
+
+  const handleCopySelectedMessages = useCallback(async () => {
+    if (!selectedMessages.length) return;
+    try {
+      await navigator.clipboard.writeText(
+        selectedMessages.map((message) => message.text).join("\n"),
+      );
+      toast.success(
+        `Copied ${selectedMessages.length} message${selectedMessages.length === 1 ? "" : "s"}`,
+      );
+    } catch (error) {
+      console.error("Failed to copy selected messages:", error);
+      toast.error("Could not copy selected messages. Check clipboard permissions and try again.");
+    }
+  }, [selectedMessages]);
+
+  const handleDeleteSelectedMessages = useCallback(async () => {
+    if (
+      !selectedChatId ||
+      !deletableSelectedMessages.length ||
+      isDeletingSelectedMessages
+    ) {
+      return;
+    }
+
+    const messageIds = deletableSelectedMessages.map((message) => message.id);
+    const confirmed = window.confirm(
+      `Delete ${messageIds.length} selected message${messageIds.length === 1 ? "" : "s"}? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    const roomId = selectedChatId;
+    setIsDeletingSelectedMessages(true);
+    try {
+      const response = await fetch("/api/messages", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room_id: roomId, message_ids: messageIds }),
+      });
+      const data = await response.json();
+      if (!response.ok || data.error) {
+        throw new Error(data.error || "Failed to delete selected messages");
+      }
+
+      const deletedIds = new Set<string>(data.deleted_ids);
+      setMessagesByChat((prev) => ({
+        ...prev,
+        [roomId]: (prev[roomId] || []).filter(
+          (message) => !deletedIds.has(message.id),
+        ),
+      }));
+      setPinnedIdsByChat((prev) => {
+        const updated = (prev[roomId] || []).filter((id) => !deletedIds.has(id));
+        try {
+          localStorage.setItem(`anonchat_pinned_${roomId}`, JSON.stringify(updated));
+        } catch {
+          // Keep the in-memory state current if localStorage is unavailable.
+        }
+        return { ...prev, [roomId]: updated };
+      });
+      setSelectedMessageIds((prev) =>
+        new Set([...prev].filter((id) => !deletedIds.has(id))),
+      );
+      toast.success(
+        `Deleted ${deletedIds.size} message${deletedIds.size === 1 ? "" : "s"}`,
+      );
+    } catch (error) {
+      console.error("Failed to delete selected messages:", error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete selected messages",
+      );
+    } finally {
+      setIsDeletingSelectedMessages(false);
+    }
+  }, [selectedChatId, deletableSelectedMessages, isDeletingSelectedMessages]);
 
   // Filter messages by search query (client-side, over loaded messages)
   const filteredMessages = useMemo(() => {
@@ -1100,6 +1221,28 @@ function ChatPageInner() {
 
                         <button
                           type="button"
+                          aria-label={
+                            isSelectionMode
+                              ? "Exit message selection mode"
+                              : "Select messages"
+                          }
+                          aria-pressed={isSelectionMode}
+                          onClick={handleToggleSelectionMode}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs transition-colors",
+                            isSelectionMode
+                              ? "border-primary/50 bg-primary/10 text-primary font-medium"
+                              : "border-border/80 text-muted-foreground hover:text-foreground hover:bg-muted/40",
+                          )}
+                        >
+                          <CheckSquare className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">
+                            {isSelectionMode ? "Selecting" : "Select"}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
                           onClick={() => setAuditTrailOpen(true)}
                           className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40"
                         >
@@ -1208,6 +1351,54 @@ function ChatPageInner() {
                     resultCount={filteredMessages.length}
                   />
 
+                  {isSelectionMode && selectedMessages.length > 0 && (
+                    <div
+                      className="mx-3 sm:mx-4 my-2 flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-card/90 px-3 py-2 shadow-sm"
+                      role="toolbar"
+                      aria-label="Bulk message actions"
+                    >
+                      <span
+                        className="mr-auto text-xs font-medium text-foreground"
+                        aria-live="polite"
+                      >
+                        {selectedMessages.length} selected
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleCopySelectedMessages}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        Copy
+                      </button>
+                      {deletableSelectedMessages.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleDeleteSelectedMessages}
+                          disabled={isDeletingSelectedMessages}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 px-2.5 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isDeletingSelectedMessages ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                          Delete
+                          {deletableSelectedMessages.length > 1
+                            ? ` (${deletableSelectedMessages.length})`
+                            : ""}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleClearMessageSelection}
+                        className="rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                      >
+                        Clear selection
+                      </button>
+                    </div>
+                  )}
+
                   <div className="px-4 sm:px-5 pt-3">
                     <RoomActivityPanel roomId={selectedChatId} />
                   </div>
@@ -1272,6 +1463,9 @@ function ChatPageInner() {
                             isHighlighted={highlightedMessageId === message.id}
                             onReply={handleReplyToMessage}
                             onJumpToMessage={handleScrollToMessage}
+                            isSelectionMode={isSelectionMode}
+                            isSelected={selectedMessageIds.has(message.id)}
+                            onToggleSelection={handleToggleMessageSelection}
                           />
                         ))}
                    </div>
