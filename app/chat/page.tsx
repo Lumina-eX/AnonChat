@@ -15,11 +15,19 @@ import {
   type PresenceStatus,
 } from "@/components/presence-indicator";
 import { RoomMembersDialog } from "@/components/room-members-dialog";
+import {
+  ForwardMessageDialog,
+  type ForwardedMessage,
+} from "@/components/forward-message-dialog";
+import * as ContextMenu from "@radix-ui/react-context-menu";
+import toast from "react-hot-toast";
 import ConnectWallet from "@/components/wallet-connector";
 import { cn } from "@/lib/utils";
 import { handleAppError } from "@/lib/error-handler"; // Integrated Error Handler
 import {
   ArrowLeft,
+  Copy,
+  Forward,
   MessageSquare,
   Loader2,
   Menu,
@@ -47,6 +55,8 @@ type ChatMessage = {
   text: string;
   time: string;
   status: "sending" | "sent" | "delivered" | "read";
+  isForwarded?: boolean;
+  forwardedOriginalAt?: string | null;
 };
 
 interface DBRoom {
@@ -63,6 +73,8 @@ interface DBMessage {
   user_id: string;
   content: string;
   created_at: string;
+  is_forwarded?: boolean | null;
+  forwarded_original_created_at?: string | null;
 }
 
 export default function ChatPage() {
@@ -70,6 +82,9 @@ export default function ChatPage() {
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState("");
   const [roomMembersOpen, setRoomMembersOpen] = useState(false);
+  const [forwardMessageId, setForwardMessageId] = useState<string | null>(
+    null,
+  );
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [activeMobileTab, setActiveMobileTab] = useState<
     "chats" | "conversation"
@@ -102,6 +117,8 @@ export default function ChatPage() {
         hour12: false,
       }),
       status: "read",
+      isForwarded: Boolean(message.is_forwarded),
+      forwardedOriginalAt: message.forwarded_original_created_at ?? null,
     }),
     [currentUser?.id],
   );
@@ -399,6 +416,8 @@ export default function ChatPage() {
 
       // Esc -> Close active modals, dropdowns, or sidebars
       if (event.key === "Escape") {
+        // The forward dialog (Radix) handles its own Escape.
+        if (forwardMessageId) return;
         if (roomMembersOpen) {
           setRoomMembersOpen(false);
         } else if (mobileSidebarOpen) {
@@ -409,7 +428,41 @@ export default function ChatPage() {
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [roomMembersOpen, mobileSidebarOpen]);
+  }, [forwardMessageId, roomMembersOpen, mobileSidebarOpen]);
+
+  const handleMessageForwarded = useCallback(
+    (destination: { id: string; name: string }, message: ForwardedMessage) => {
+      const forwarded = transformToChatMessage(message);
+      // Only append if the destination's history is already loaded; otherwise
+      // it is fetched (including this message) when that group is opened.
+      setMessagesByChat((prev) =>
+        prev[destination.id]
+          ? { ...prev, [destination.id]: [...prev[destination.id], forwarded] }
+          : prev,
+      );
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.id === destination.id
+            ? {
+                ...chat,
+                lastMessage: message.content,
+                lastSeen: forwarded.time,
+              }
+            : chat,
+        ),
+      );
+    },
+    [transformToChatMessage],
+  );
+
+  const handleCopyMessage = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Message copied");
+    } catch {
+      toast.error("Couldn't copy message");
+    }
+  }, []);
 
   const filteredChats = useMemo(() => {
     if (!query.trim()) return chats;
@@ -606,15 +659,38 @@ export default function ChatPage() {
 
                     {!isLoadingMessages &&
                       messages.map((message) => (
+                        <ContextMenu.Root key={message.id}>
+                          <ContextMenu.Trigger
+                            asChild
+                            disabled={message.status === "sending"}
+                          >
                         <div
-                          key={message.id}
                           className={cn(
                             "max-w-[85%] sm:max-w-[72%] rounded-2xl px-4 py-2.5 shadow-sm text-sm",
+                            "data-[state=open]:ring-2 data-[state=open]:ring-primary/40",
                             message.author === "me"
                               ? "ml-auto bg-primary text-primary-foreground rounded-br-sm"
                               : "mr-auto bg-card border border-border/70 rounded-bl-sm",
                           )}
                         >
+                          {message.isForwarded && (
+                            <p
+                              className={cn(
+                                "mb-1 flex items-center gap-1 text-[11px] italic",
+                                message.author === "me"
+                                  ? "text-primary-foreground/80"
+                                  : "text-muted-foreground",
+                              )}
+                              title={
+                                message.forwardedOriginalAt
+                                  ? `Originally sent ${new Date(message.forwardedOriginalAt).toLocaleString()}`
+                                  : undefined
+                              }
+                            >
+                              <Forward className="h-3 w-3" aria-hidden />
+                              Forwarded
+                            </p>
+                          )}
                           <p className="whitespace-pre-wrap break-words leading-relaxed">
                             {message.text}
                           </p>
@@ -634,6 +710,26 @@ export default function ChatPage() {
                             )}
                           </div>
                         </div>
+                          </ContextMenu.Trigger>
+                          <ContextMenu.Portal>
+                            <ContextMenu.Content className="z-50 min-w-40 rounded-xl border border-border/70 bg-card p-1 text-sm shadow-lg">
+                              <ContextMenu.Item
+                                onSelect={() => setForwardMessageId(message.id)}
+                                className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
+                              >
+                                <Forward className="h-4 w-4" /> Forward
+                              </ContextMenu.Item>
+                              <ContextMenu.Item
+                                onSelect={() =>
+                                  void handleCopyMessage(message.text)
+                                }
+                                className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
+                              >
+                                <Copy className="h-4 w-4" /> Copy text
+                              </ContextMenu.Item>
+                            </ContextMenu.Content>
+                          </ContextMenu.Portal>
+                        </ContextMenu.Root>
                       ))}
                   </div>
 
@@ -683,6 +779,14 @@ export default function ChatPage() {
                     roomId={selectedChat.id}
                     open={roomMembersOpen}
                     onOpenChange={setRoomMembersOpen}
+                  />
+
+                  <ForwardMessageDialog
+                    messageId={forwardMessageId}
+                    onOpenChange={(open) => {
+                      if (!open) setForwardMessageId(null);
+                    }}
+                    onForwarded={handleMessageForwarded}
                   />
                 </>
               )}

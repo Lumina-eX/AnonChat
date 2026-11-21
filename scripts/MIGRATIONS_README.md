@@ -11,6 +11,7 @@ Included migrations (apply in numeric order):
 - `005_add_last_read_to_room_members.sql` (new)
 - `006_unread_view.sql`          (new)
 - `007_create_group_membership.sql`  (new)
+- `011_message_forwarding.sql` (new — adds `is_forwarded`, `forwarded_from_message_id`, `forwarded_original_created_at` to `messages`)
 
 ## How to apply (psql)
 
