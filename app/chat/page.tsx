@@ -43,9 +43,9 @@ import {
 import {
   AlertTriangle,
   ArrowLeft,
+  Check,
   Copy,
   Forward,
-  Check,
   MessageSquare,
   Loader2,
   Menu,
@@ -76,15 +76,6 @@ type ChatPreview = {
   status: PresenceStatus;
 };
 
-type ChatMessage = {
-  id: string;
-  author: "me" | "them";
-  text: string;
-  time: string;
-  status: "sending" | "sent" | "delivered" | "read";
-  isForwarded?: boolean;
-  forwardedOriginalAt?: string | null;
-};
 /** Reason a URL-specified group could not be opened. */
 type DeepLinkError =
   | "not_found"     // Group does not exist or was deleted
@@ -104,8 +95,6 @@ interface DBMessage {
   user_id: string;
   content: string;
   created_at: string;
-  is_forwarded?: boolean | null;
-  forwarded_original_created_at?: string | null;
   reply_to_id?: string | null;
   reply_to?: {
     id: string;
@@ -116,6 +105,8 @@ interface DBMessage {
     display_name?: string;
     avatar_url?: string;
   };
+  is_forwarded?: boolean | null;
+  forwarded_original_created_at?: string | null;
 }
 
 /** Debounce before a composer edit is written to the draft store. */
@@ -324,19 +315,6 @@ function ChatPageInner() {
   }, []);
 
   const transformToChatMessage = useCallback(
-    (message: DBMessage): ChatMessage => ({
-      id: message.id,
-      author: message.user_id === currentUser?.id ? "me" : "them",
-      text: message.content,
-      time: new Date(message.created_at).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }),
-      status: "read",
-      isForwarded: Boolean(message.is_forwarded),
-      forwardedOriginalAt: message.forwarded_original_created_at ?? null,
-    }),
     (message: DBMessage): ChatMessage => {
       let replyTo: ChatMessage["replyTo"] = null;
       if (message.reply_to) {
@@ -364,6 +342,8 @@ function ChatPageInner() {
         status: "read",
         replyTo,
         senderName: message.profiles?.display_name,
+        isForwarded: Boolean(message.is_forwarded),
+        forwardedOriginalAt: message.forwarded_original_created_at ?? null,
       };
     },
     [currentUser?.id],
@@ -852,7 +832,6 @@ function ChatPageInner() {
       if (event.key === "Escape") {
         // The forward dialog (Radix) handles its own Escape.
         if (forwardMessageId) return;
-        if (roomMembersOpen) {
         if (replyingToMessage) {
           setReplyingToMessage(null);
         } else if (roomMembersOpen) {
@@ -865,7 +844,11 @@ function ChatPageInner() {
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [forwardMessageId, roomMembersOpen, mobileSidebarOpen]);
+  }, [forwardMessageId, roomMembersOpen, mobileSidebarOpen, replyingToMessage]);
+
+  const handleForwardMessage = useCallback((message: ChatMessage) => {
+    setForwardMessageId(message.id);
+  }, []);
 
   const handleMessageForwarded = useCallback(
     (destination: { id: string; name: string }, message: ForwardedMessage) => {
@@ -900,7 +883,6 @@ function ChatPageInner() {
       toast.error("Couldn't copy message");
     }
   }, []);
-  }, [roomMembersOpen, mobileSidebarOpen, replyingToMessage]);
 
   const filteredChats = useMemo(() => {
     if (!query.trim()) return chats;
@@ -1255,50 +1237,6 @@ function ChatPageInner() {
                           </div>
                         )}
 
-                    {!isLoadingMessages &&
-                      messages.map((message) => (
-                        <ContextMenu.Root key={message.id}>
-                          <ContextMenu.Trigger
-                            asChild
-                            disabled={message.status === "sending"}
-                          >
-                        <div
-                          className={cn(
-                            "max-w-[85%] sm:max-w-[72%] rounded-2xl px-4 py-2.5 shadow-sm text-sm",
-                            "data-[state=open]:ring-2 data-[state=open]:ring-primary/40",
-                            message.author === "me"
-                              ? "ml-auto bg-primary text-primary-foreground rounded-br-sm"
-                              : "mr-auto bg-card border border-border/70 rounded-bl-sm",
-                          )}
-                        >
-                          {message.isForwarded && (
-                            <p
-                              className={cn(
-                                "mb-1 flex items-center gap-1 text-[11px] italic",
-                                message.author === "me"
-                                  ? "text-primary-foreground/80"
-                                  : "text-muted-foreground",
-                              )}
-                              title={
-                                message.forwardedOriginalAt
-                                  ? `Originally sent ${new Date(message.forwardedOriginalAt).toLocaleString()}`
-                                  : undefined
-                              }
-                            >
-                              <Forward className="h-3 w-3" aria-hidden />
-                              Forwarded
-                            </p>
-                          )}
-                          <p className="whitespace-pre-wrap break-words leading-relaxed">
-                            {message.text}
-                          </p>
-                          <div
-                            className={cn(
-                              "mt-1 flex items-center justify-end gap-1 text-[10px]",
-                              message.author === "me"
-                                ? "text-primary-foreground/80"
-                                : "text-muted-foreground",
-                            )}
                         {isAdmin && activePinnedMessage && (
                           <button
                             type="button"
@@ -1379,17 +1317,48 @@ function ChatPageInner() {
 
                      {!isLoadingMessagesByRoom[selectedChatId || ''] &&
                         filteredMessages.map((message) => (
-                          <ChatMessageBubble 
-                            key={message.id} 
-                            message={message} 
-                            searchQuery={messageSearchQuery}
-                            isPinned={pinnedIds.includes(message.id)}
-                            isAdmin={isAdmin}
-                            onTogglePin={(msgId) => togglePinMessage(selectedChat.id, msgId)}
-                            isHighlighted={highlightedMessageId === message.id}
-                            onReply={handleReplyToMessage}
-                            onJumpToMessage={handleScrollToMessage}
-                          />
+                          <ContextMenu.Root key={message.id}>
+                            <ContextMenu.Trigger
+                              asChild
+                              disabled={message.status === "sending"}
+                            >
+                              <div>
+                                <ChatMessageBubble
+                                  message={message}
+                                  searchQuery={messageSearchQuery}
+                                  isPinned={pinnedIds.includes(message.id)}
+                                  isAdmin={isAdmin}
+                                  onTogglePin={(msgId) => togglePinMessage(selectedChat.id, msgId)}
+                                  isHighlighted={highlightedMessageId === message.id}
+                                  onReply={handleReplyToMessage}
+                                  onJumpToMessage={handleScrollToMessage}
+                                  onForward={handleForwardMessage}
+                                />
+                              </div>
+                            </ContextMenu.Trigger>
+                            <ContextMenu.Portal>
+                              <ContextMenu.Content className="z-50 min-w-40 rounded-xl border border-border/70 bg-card p-1 text-sm shadow-lg">
+                                <ContextMenu.Item
+                                  onSelect={() => handleReplyToMessage(message)}
+                                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
+                                >
+                                  <Reply className="h-4 w-4" /> Reply
+                                </ContextMenu.Item>
+                                <ContextMenu.Item
+                                  onSelect={() => handleForwardMessage(message)}
+                                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
+                                >
+                                  <Forward className="h-4 w-4" /> Forward
+                                </ContextMenu.Item>
+                                <ContextMenu.Item
+                                  onSelect={() => void handleCopyMessage(message.text)}
+                                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
+                                >
+                                  <Copy className="h-4 w-4" /> Copy text
+                                </ContextMenu.Item>
+                              </ContextMenu.Content>
+                            </ContextMenu.Portal>
+                          </ContextMenu.Root>
                         ))}
                    </div>
 
@@ -1411,28 +1380,6 @@ function ChatPageInner() {
                             </p>
                           </div>
                         </div>
-                          </ContextMenu.Trigger>
-                          <ContextMenu.Portal>
-                            <ContextMenu.Content className="z-50 min-w-40 rounded-xl border border-border/70 bg-card p-1 text-sm shadow-lg">
-                              <ContextMenu.Item
-                                onSelect={() => setForwardMessageId(message.id)}
-                                className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
-                              >
-                                <Forward className="h-4 w-4" /> Forward
-                              </ContextMenu.Item>
-                              <ContextMenu.Item
-                                onSelect={() =>
-                                  void handleCopyMessage(message.text)
-                                }
-                                className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
-                              >
-                                <Copy className="h-4 w-4" /> Copy text
-                              </ContextMenu.Item>
-                            </ContextMenu.Content>
-                          </ContextMenu.Portal>
-                        </ContextMenu.Root>
-                      ))}
-                  </div>
                         <button
                           type="button"
                           onClick={handleCancelReply}
@@ -1500,13 +1447,13 @@ function ChatPageInner() {
                     open={roomMembersOpen}
                     onOpenChange={setRoomMembersOpen}
                   />
-
                   <ForwardMessageDialog
                     messageId={forwardMessageId}
                     onOpenChange={(open) => {
                       if (!open) setForwardMessageId(null);
                     }}
                     onForwarded={handleMessageForwarded}
+                  />
                   <GroupAuditDialog
                     groupId={selectedChat.id}
                     open={auditTrailOpen}

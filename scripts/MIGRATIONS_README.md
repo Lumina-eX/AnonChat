@@ -11,11 +11,11 @@ Included migrations (apply in numeric order):
 - `005_add_last_read_to_room_members.sql` (new)
 - `006_unread_view.sql`          (new)
 - `007_create_group_membership.sql`  (new)
-- `011_message_forwarding.sql` (new — adds `is_forwarded`, `forwarded_from_message_id`, `forwarded_original_created_at` to `messages`)
 - `011_enhance_invites_for_group_join.sql` (new)
 - `012_group_audit_events.sql` (new)
 - `015_stellar_transaction_verifications.sql` (new)
 - `022_transaction_receipts.sql` (new)
+- `024_message_forwarding.sql` (new — adds `is_forwarded`, `forwarded_from_message_id`, `forwarded_original_created_at` to `messages`)
 
 ## How to apply (psql)
 
@@ -36,6 +36,7 @@ psql "$DATABASE_URL" -f scripts/007_create_group_membership.sql
 psql "$DATABASE_URL" -f scripts/011_enhance_invites_for_group_join.sql
 psql "$DATABASE_URL" -f scripts/012_group_audit_events.sql
 psql "$DATABASE_URL" -f scripts/015_stellar_transaction_verifications.sql
+psql "$DATABASE_URL" -f scripts/024_message_forwarding.sql
 ```
 
 ## How to apply (Supabase)
