@@ -18,6 +18,7 @@ export default defineConfig({
       "lib/auth/session-store.test.ts",
       "lib/drafts/draft-store.test.ts",
       "tests/wallet-ownership-proof.test.ts",
+      "tests/sep10-authentication.test.ts",
       "tests/group-members-pagination.test.ts",
       "tests/stellar-transaction-history.test.ts",
       "tests/wallet-balance.test.ts",
