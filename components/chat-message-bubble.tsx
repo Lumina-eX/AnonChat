@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { cn } from "@/lib/utils";
 import { highlightText } from "@/lib/highlight-text";
-import { Pin, Reply } from "lucide-react";
+import { Forward, Pin, Reply } from "lucide-react";
 
 export type Reaction = {
   emoji: string;
@@ -25,6 +25,8 @@ export type ChatMessage = {
   reactions?: Reaction[];
   replyTo?: ReplyToInfo | null;
   senderName?: string;
+  isForwarded?: boolean;
+  forwardedOriginalAt?: string | null;
 };
 
 interface ChatMessageBubbleProps {
@@ -38,6 +40,7 @@ interface ChatMessageBubbleProps {
   onReact?: (messageId: string, emoji: string) => void;
   onReply?: (message: ChatMessage) => void;
   onJumpToMessage?: (messageId: string) => void;
+  onForward?: (message: ChatMessage) => void;
 }
 
 // A lightweight set of emojis for quick reactions
@@ -54,6 +57,7 @@ export function ChatMessageBubble({
   onReact,
   onReply,
   onJumpToMessage,
+  onForward,
 }: ChatMessageBubbleProps) {
   const isMe = message.author === "me";
   const [showPicker, setShowPicker] = useState(false);
@@ -105,6 +109,19 @@ export function ChatMessageBubble({
             </button>
           </>
         )}
+
+        {onForward && message.status !== "sending" && (
+          <button
+            type="button"
+            onClick={() => onForward(message)}
+            className="p-1 px-1.5 hover:bg-muted rounded-full text-xs text-muted-foreground hover:text-foreground transition-all flex items-center gap-1"
+            title="Forward message"
+            aria-label="Forward message"
+          >
+            <Forward className="h-3.5 w-3.5" />
+            <span className="text-[11px] font-medium hidden sm:inline">Forward</span>
+          </button>
+        )}
       </div>
 
       {/* Message Bubble */}
@@ -123,6 +140,23 @@ export function ChatMessageBubble({
             <Pin className="h-3 w-3 rotate-45" />
             <span>Pinned</span>
           </div>
+        )}
+
+        {message.isForwarded && (
+          <p
+            className={cn(
+              "mb-1 flex items-center gap-1 text-[11px] italic",
+              isMe ? "text-primary-foreground/80" : "text-muted-foreground"
+            )}
+            title={
+              message.forwardedOriginalAt
+                ? `Originally sent ${new Date(message.forwardedOriginalAt).toLocaleString()}`
+                : undefined
+            }
+          >
+            <Forward className="h-3 w-3" aria-hidden />
+            Forwarded
+          </p>
         )}
 
         {/* Quoted Message in Reply */}
