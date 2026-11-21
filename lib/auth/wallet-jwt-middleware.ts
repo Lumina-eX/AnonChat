@@ -10,6 +10,7 @@ import { validateSession } from "@/lib/auth/session-store";
 const PUBLIC_API_PREFIXES = [
   "/api/auth/nonce",
   "/api/auth/wallet-login",
+  "/api/auth/sep10",
   "/api/auth/refresh",
   "/api/auth/logout",
   "/api/auth/sign-up",
