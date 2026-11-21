@@ -13,6 +13,7 @@ interface RealtimeMessageUpdate {
   content: string
   createdAt: number
   status: "sending" | "sent" | "delivered"
+  editedAt?: number
 }
 
 export interface TypingIndicator {
@@ -33,6 +34,7 @@ export function useRealtimeChat(roomId: string, userId?: string) {
   const [typingUsers, setTypingUsers] = useState<Map<string, TypingIndicator>>(new Map())
   const [roomUsers, setRoomUsers] = useState<Set<string>>(new Set())
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "disconnected">("disconnected")
+  const [removedFromRoom, setRemovedFromRoom] = useState(false)
 
   const {
     sendMessage,
@@ -41,6 +43,7 @@ export function useRealtimeChat(roomId: string, userId?: string) {
     markAsDelivered,
     notifyTyping,
     notifyStopTyping,
+    editMessage,
   } = useWebSocketSend()
 
   // Join room on mount
@@ -89,12 +92,36 @@ export function useRealtimeChat(roomId: string, userId?: string) {
     }
   })
 
+  // Listen for message edits broadcast from the server
+  useWebSocketMessage("message_edit", (msg: WebSocketMessage) => {
+    const payload = msg.payload as any
+    if (payload.roomId === roomId) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === payload.messageId
+            ? { ...m, content: payload.content, editedAt: payload.editedAt ?? m.editedAt }
+            : m,
+        ),
+      )
+    }
+  })
+
   // Listen for room joins
   useWebSocketMessage("room_join", (msg: WebSocketMessage) => {
     if ((msg.payload as any).roomId === roomId) {
       setRoomUsers((prev) => new Set([...prev, (msg.payload as any).userId]))
       toast.info(`${(msg.payload as any).displayName} joined the room`)
     }
+  })
+
+  // A removal event is sent directly to the removed user's active sockets.
+  useWebSocketMessage("member_removed", (msg: WebSocketMessage) => {
+    const payload = msg.payload as any
+    if (payload.groupId !== roomId) return
+
+    setRemovedFromRoom(true)
+    leaveRoom(roomId)
+    toast.error("You were removed from this group")
   })
 
   // Listen for room leaves
@@ -163,7 +190,7 @@ export function useRealtimeChat(roomId: string, userId?: string) {
 
   const handleSendMessage = useCallback(
     (content: string) => {
-      if (!content.trim() || !roomId) return
+      if (!content.trim() || !roomId || removedFromRoom) return
 
       // Optimistically add message
       const optimisticMessage: RealtimeMessageUpdate = {
@@ -186,7 +213,18 @@ export function useRealtimeChat(roomId: string, userId?: string) {
         toast.error(result.error || "Failed to send message")
       }
     },
-    [roomId, userId, sendMessage],
+    [roomId, userId, removedFromRoom, sendMessage],
+  )
+
+  const handleEditMessage = useCallback(
+    (messageId: string, newContent: string) => {
+      if (!roomId) return
+      const result = editMessage(messageId, roomId, newContent)
+      if (!result.success) {
+        toast.error(result.error || "Failed to edit message")
+      }
+    },
+    [roomId, editMessage],
   )
 
   const handleTyping = useCallback(() => {
@@ -208,6 +246,7 @@ export function useRealtimeChat(roomId: string, userId?: string) {
     connectionStatus,
     handlers: {
       sendMessage: handleSendMessage,
+      editMessage: handleEditMessage,
       typing: handleTyping,
       stopTyping: handleStopTyping,
     },
@@ -309,4 +348,34 @@ export function RoomUsersList({ users }: { users: string[] }) {
       {users.length > 1 && "s"} online
     </div>
   )
+}
+
+/**
+ * useStellarTransactionUpdates — subscribes to real-time stellar_transaction_update
+ * WebSocket events so the UI can immediately reflect state changes for on-going
+ * transactions without requiring a manual poll or page refresh.
+ *
+ * Usage:
+ *   useStellarTransactionUpdates(flowId, (payload) => {
+ *     // payload.state is the new TransactionConfirmationState
+ *   });
+ */
+export function useStellarTransactionUpdates(
+  flowId: string | null | undefined,
+  onUpdate: (payload: {
+    flowId: string
+    state: string
+    transactionHash?: string | null
+    ledger?: number | null
+    errorMessage?: string | null
+  }) => void,
+) {
+  const callbackRef = useRef(onUpdate)
+  callbackRef.current = onUpdate
+
+  useWebSocketMessage("stellar_transaction_update", (msg: WebSocketMessage) => {
+    const payload = msg.payload as any
+    if (!flowId || payload?.flowId !== flowId) return
+    callbackRef.current?.(payload)
+  })
 }

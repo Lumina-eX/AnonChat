@@ -3,6 +3,8 @@ import { consumeNonce, verifyWalletSignature } from "@/lib/auth/stellar-verify";
 import { createClient } from "@/lib/supabase/server";
 import { deterministicPassword } from "@/lib/auth/password";
 import { validateWalletAddressWithMessage } from "@/lib/auth/validation";
+import { buildWalletAuthResponse } from "@/lib/auth/wallet-token-response";
+import { createSession } from "@/lib/auth/session-store";
 
 /**
  * POST /api/auth/wallet-login
@@ -39,9 +41,9 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 2. Consume the nonce (one-time use, expires after 5 min) ────────────
-    const nonce = consumeNonce(walletAddress);
+    const nonce = await consumeNonce(walletAddress);
     if (!nonce) {
-      console.warn(`[wallet-auth] /api/auth/wallet-login nonce not found or expired for wallet: ${walletAddress.substring(0, 8)}...`);
+      console.warn(`[wallet-auth] /api/auth/wallet-login nonce rejection: missing or expired for wallet: ${walletAddress.substring(0, 8)}...`);
       return NextResponse.json(
         { error: "Nonce not found or expired. Request a new nonce." },
         { status: 401 },
@@ -74,14 +76,24 @@ export async function POST(request: NextRequest) {
 
     if (!signInError && signInData.session) {
       console.log(`[wallet-auth] /api/auth/wallet-login successful sign-in for wallet: ${walletAddress.substring(0, 8)}...`);
-      return NextResponse.json(
+      const sigVerifiedAt = Math.floor(Date.now() / 1000);
+      const sessionId = await createSession({
+        walletAddress,
+        userAgent: request.headers.get("user-agent") ?? undefined,
+        ipAddress: request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip") ?? undefined,
+      });
+      return buildWalletAuthResponse(
+        walletAddress,
         {
           session: signInData.session,
           user: signInData.user,
           walletAddress,
           isNewUser: false,
+          sessionId,
         },
-        { status: 200 },
+        200,
+        sigVerifiedAt,
+        sessionId,
       );
     }
 
@@ -111,14 +123,24 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`[wallet-auth] /api/auth/wallet-login successful sign-up for wallet: ${walletAddress.substring(0, 8)}...`);
-    return NextResponse.json(
+    const sigVerifiedAt = Math.floor(Date.now() / 1000);
+    const sessionId = await createSession({
+      walletAddress,
+      userAgent: request.headers.get("user-agent") ?? undefined,
+      ipAddress: request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip") ?? undefined,
+    });
+    return buildWalletAuthResponse(
+      walletAddress,
       {
         session: signUpData.session,
         user: signUpData.user,
         walletAddress,
         isNewUser: true,
+        sessionId,
       },
-      { status: 201 },
+      201,
+      sigVerifiedAt,
+      sessionId,
     );
   } catch (err: any) {
     console.error("[wallet-auth] /api/auth/wallet-login error:", err);

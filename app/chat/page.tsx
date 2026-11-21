@@ -1,15 +1,19 @@
 "use client";
 
 import React, {
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChatWelcomeState } from "@/components/chat-welcome-state";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
+import { ChatEmptyState } from "@/components/chat-empty-state";
+import { GroupAuditDialog } from "@/components/group-audit-dialog";
 import {
   PresenceIndicator,
   type PresenceStatus,
@@ -22,12 +26,26 @@ import {
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import toast from "react-hot-toast";
 import ConnectWallet from "@/components/wallet-connector";
+import { RoomActivityPanel } from "@/components/room-activity-panel";
+import MemberPanel from "@/components/MemberPanel";
+import { MessageSearchBar } from "@/components/message-search-bar";
+import { GroupVerificationBadge } from "@/components/GroupVerificationBadge";
+import { ChatMessageBubble, type ChatMessage } from "@/components/chat-message-bubble";
 import { cn } from "@/lib/utils";
+import { highlightText } from "@/lib/highlight-text";
 import { handleAppError } from "@/lib/error-handler"; // Integrated Error Handler
 import {
+  clearDraft,
+  getDraft,
+  setDraft,
+  subscribeDraft,
+} from "@/lib/drafts/draft-store";
+import {
+  AlertTriangle,
   ArrowLeft,
   Copy,
   Forward,
+  Check,
   MessageSquare,
   Loader2,
   Menu,
@@ -36,8 +54,17 @@ import {
   Search,
   SendHorizontal,
   Smile,
+  ScrollText,
   Users,
+  Pin,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  ShieldCheck,
+  Reply,
 } from "lucide-react";
+import { StellarNetworkStatus } from "@/components/stellar-network-status";
+import { WalletNetworkWarning } from "@/components/wallet-network-warning";
 
 type ChatPreview = {
   id: string;
@@ -58,6 +85,10 @@ type ChatMessage = {
   isForwarded?: boolean;
   forwardedOriginalAt?: string | null;
 };
+/** Reason a URL-specified group could not be opened. */
+type DeepLinkError =
+  | "not_found"     // Group does not exist or was deleted
+  | "unauthorized"; // Group exists but user is not a member
 
 interface DBRoom {
   id: string;
@@ -75,16 +106,47 @@ interface DBMessage {
   created_at: string;
   is_forwarded?: boolean | null;
   forwarded_original_created_at?: string | null;
+  reply_to_id?: string | null;
+  reply_to?: {
+    id: string;
+    content: string;
+    user_id?: string;
+  } | null;
+  profiles?: {
+    display_name?: string;
+    avatar_url?: string;
+  };
 }
 
-export default function ChatPage() {
+/** Debounce before a composer edit is written to the draft store. */
+const DRAFT_SAVE_DEBOUNCE_MS = 400;
+
+/**
+ * Inner page component — must be wrapped in <Suspense> because it calls
+ * useSearchParams(), which requires a Suspense boundary in Next.js App Router.
+ */
+function ChatPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Track deep-link resolution so we apply the URL param exactly once after
+  // rooms have finished loading.
+  const deepLinkApplied = useRef(false);
+  const [deepLinkError, setDeepLinkError] = useState<DeepLinkError | null>(null);
+
   const [query, setQuery] = useState("");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState("");
+  const [isDraftSaved, setIsDraftSaved] = useState(false);
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const [roomMembersOpen, setRoomMembersOpen] = useState(false);
   const [forwardMessageId, setForwardMessageId] = useState<string | null>(
     null,
   );
+  const [memberPanelMobileOpen, setMemberPanelMobileOpen] = useState(false);
+  const [auditTrailOpen, setAuditTrailOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [activeMobileTab, setActiveMobileTab] = useState<
     "chats" | "conversation"
@@ -92,8 +154,11 @@ export default function ChatPage() {
 
   const [currentUser, setCurrentUser] = useState<{ id: string } | null>(null);
   const [isLoadingRooms, setIsLoadingRooms] = useState(true);
-  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
+
+  // Message search state
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState("");
 
   const [chats, setChats] = useState<ChatPreview[]>([]);
   const [messagesByChat, setMessagesByChat] = useState<
@@ -102,9 +167,161 @@ export default function ChatPage() {
   const [memberCountByRoom, setMemberCountByRoom] = useState<
     Record<string, number>
   >({});
+  
+  // Pagination state per room
+  const [messageOffsets, setMessageOffsets] = useState<Record<string, number>>({});
+  const [hasMoreMessages, setHasMoreMessages] = useState<Record<string, boolean>>({});
+  const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState<Record<string, boolean>>({});
+  const [isLoadingMessagesByRoom, setIsLoadingMessagesByRoom] = useState<
+    Record<string, boolean>
+  >({});
+  const loadingRef = useRef<Record<string, boolean>>({});
+
+  // Pinned messages & admin state
+  const [pinnedIdsByChat, setPinnedIdsByChat] = useState<Record<string, string[]>>({});
+  const [currentPinnedIndexByChat, setCurrentPinnedIndexByChat] = useState<Record<string, number>>({});
+  const [isAdmin, setIsAdmin] = useState<boolean>(true);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Load pinned message IDs from localStorage per room
+  useEffect(() => {
+    if (!selectedChatId) return;
+    try {
+      const stored = localStorage.getItem(`anonchat_pinned_${selectedChatId}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setPinnedIdsByChat((prev) => ({
+            ...prev,
+            [selectedChatId]: parsed,
+          }));
+        }
+      }
+    } catch {
+      // Ignore localStorage read errors
+    }
+  }, [selectedChatId]);
+
+  // Restore the saved draft whenever the active group changes. Drafts live in
+  // localStorage only, so nothing is ever sent to the backend.
+  useEffect(() => {
+    const restored = selectedChatId ? getDraft(selectedChatId) : "";
+    setInputMessage(restored);
+    setIsDraftSaved(restored.length > 0);
+  }, [selectedChatId]);
+
+  // Keep the "Draft saved" indicator truthful if the draft changes elsewhere.
+  useEffect(() => {
+    if (!selectedChatId) return;
+    return subscribeDraft(selectedChatId, (draft) => {
+      setIsDraftSaved(draft.length > 0);
+    });
+  }, [selectedChatId]);
+
+  const cancelPendingDraftSave = useCallback(() => {
+    if (draftSaveTimerRef.current !== null) {
+      clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+  }, []);
+
+  // Drop any pending debounce when the page unmounts.
+  useEffect(() => {
+    return () => cancelPendingDraftSave();
+  }, [cancelPendingDraftSave]);
+
+  const handleComposerChange = useCallback(
+    (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const value = event.target.value;
+      setInputMessage(value);
+
+      if (!selectedChatId) return;
+
+      // Persist after a short pause so we do not write on every keystroke.
+      cancelPendingDraftSave();
+      draftSaveTimerRef.current = setTimeout(() => {
+        draftSaveTimerRef.current = null;
+        if (value.trim()) {
+          setIsDraftSaved(setDraft(selectedChatId, value));
+        } else {
+          clearDraft(selectedChatId);
+          setIsDraftSaved(false);
+        }
+      }, DRAFT_SAVE_DEBOUNCE_MS);
+    },
+    [cancelPendingDraftSave, selectedChatId],
+  );
+
+  const togglePinMessage = useCallback((chatId: string, msgId: string) => {
+    setPinnedIdsByChat((prev) => {
+      const currentList = prev[chatId] || [];
+      const isAlreadyPinned = currentList.includes(msgId);
+      const updated = isAlreadyPinned
+        ? currentList.filter((id) => id !== msgId)
+        : [...currentList, msgId];
+
+      try {
+        localStorage.setItem(`anonchat_pinned_${chatId}`, JSON.stringify(updated));
+      } catch {
+        // Ignore localStorage write errors
+      }
+
+      return {
+        ...prev,
+        [chatId]: updated,
+      };
+    });
+  }, []);
+
+  const handleScrollToMessage = useCallback((msgId: string) => {
+    const targetEl = document.getElementById(`msg-${msgId}`);
+    if (targetEl) {
+      targetEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightedMessageId(msgId);
+      setTimeout(() => {
+        setHighlightedMessageId(null);
+      }, 2200);
+    }
+  }, []);
+
+  const pinnedIds = useMemo(() => {
+    return selectedChatId ? pinnedIdsByChat[selectedChatId] || [] : [];
+  }, [selectedChatId, pinnedIdsByChat]);
+
+  const pinnedMessages = useMemo(() => {
+    if (!selectedChatId) return [];
+    const roomMsgs = messagesByChat[selectedChatId] || [];
+    return pinnedIds
+      .map((id) => roomMsgs.find((m) => m.id === id))
+      .filter((m): m is ChatMessage => Boolean(m));
+  }, [selectedChatId, messagesByChat, pinnedIds]);
+
+  const activePinnedIndex = useMemo(() => {
+    if (!selectedChatId) return 0;
+    const idx = currentPinnedIndexByChat[selectedChatId] || 0;
+    return idx >= pinnedMessages.length ? 0 : idx;
+  }, [selectedChatId, currentPinnedIndexByChat, pinnedMessages.length]);
+
+  const activePinnedMessage = pinnedMessages[activePinnedIndex] || null;
+
+  const handleNextPinned = useCallback((chatId: string, total: number) => {
+    if (total <= 1) return;
+    setCurrentPinnedIndexByChat((prev) => ({
+      ...prev,
+      [chatId]: ((prev[chatId] || 0) + 1) % total,
+    }));
+  }, []);
+
+  const handlePrevPinned = useCallback((chatId: string, total: number) => {
+    if (total <= 1) return;
+    setCurrentPinnedIndexByChat((prev) => ({
+      ...prev,
+      [chatId]: ((prev[chatId] || 0) - 1 + total) % total,
+    }));
+  }, []);
 
   const transformToChatMessage = useCallback(
     (message: DBMessage): ChatMessage => ({
@@ -120,6 +337,35 @@ export default function ChatPage() {
       isForwarded: Boolean(message.is_forwarded),
       forwardedOriginalAt: message.forwarded_original_created_at ?? null,
     }),
+    (message: DBMessage): ChatMessage => {
+      let replyTo: ChatMessage["replyTo"] = null;
+      if (message.reply_to) {
+        replyTo = {
+          id: message.reply_to.id,
+          text: message.reply_to.content,
+          sender: message.reply_to.user_id === currentUser?.id ? "You" : "Them",
+        };
+      } else if (message.reply_to_id) {
+        replyTo = {
+          id: message.reply_to_id,
+          text: "Original message",
+        };
+      }
+
+      return {
+        id: message.id,
+        author: message.user_id === currentUser?.id ? "me" : "them",
+        text: message.content,
+        time: new Date(message.created_at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }),
+        status: "read",
+        replyTo,
+        senderName: message.profiles?.display_name,
+      };
+    },
     [currentUser?.id],
   );
 
@@ -204,48 +450,160 @@ export default function ChatPage() {
       );
 
       setChats(previews);
-      setSelectedChatId(
-        (currentSelected) => currentSelected || previews[0]?.id || null,
-      );
+
+      // --- Deep-link resolution (runs only once) ---
+      // Read the ?group= param from the URL at the time rooms finish loading.
+      // We do this inside the callback so we always see the freshly-loaded room
+      // list rather than a stale closure value.
+      if (!deepLinkApplied.current) {
+        deepLinkApplied.current = true;
+
+        const urlGroupId = searchParams.get("group");
+
+        if (urlGroupId) {
+          const matchedRoom = previews.find((r) => r.id === urlGroupId);
+
+          if (matchedRoom) {
+            // Valid group the user has access to — select it.
+            setSelectedChatId(urlGroupId);
+            setDeepLinkError(null);
+          } else if (previews.length === 0) {
+            // User has no rooms at all — we can't tell whether this group
+            // ever existed, treat as not-found.
+            setDeepLinkError("not_found");
+            setSelectedChatId(null);
+            // Remove the stale param from the URL.
+            const params = new URLSearchParams(searchParams.toString());
+            params.delete("group");
+            const qs = params.toString();
+            router.replace(qs ? `/chat?${qs}` : "/chat", { scroll: false });
+          } else {
+            // Rooms loaded but the requested group is not in the list — the
+            // user either lacks access or the group was deleted.  Show the
+            // unauthorised banner; the API doesn't disambiguate these two
+            // cases from the client, so we show "unauthorized" as the default
+            // (the most common real-world scenario — sharing a private group).
+            setDeepLinkError("unauthorized");
+            setSelectedChatId(previews[0]?.id || null);
+            // Remove the inaccessible group from the URL, fall back to first.
+            const params = new URLSearchParams(searchParams.toString());
+            if (previews[0]) {
+              params.set("group", previews[0].id);
+            } else {
+              params.delete("group");
+            }
+            const qs = params.toString();
+            router.replace(qs ? `/chat?${qs}` : "/chat", { scroll: false });
+          }
+        } else {
+          // No group param — default to first room as before.
+          setSelectedChatId(
+            (currentSelected) => currentSelected || previews[0]?.id || null,
+          );
+        }
+      } else {
+        // Subsequent re-fetches (e.g. new room created) preserve current selection.
+        setSelectedChatId(
+          (currentSelected) => currentSelected || previews[0]?.id || null,
+        );
+      }
     } catch {
       setChats([]);
       setSelectedChatId(null);
     } finally {
       setIsLoadingRooms(false);
     }
-  }, [fetchRoomLastMessagePreview]);
+  }, [fetchRoomLastMessagePreview, searchParams, router]);
 
   const fetchMessagesForRoom = useCallback(
-    async (roomId: string) => {
-      setIsLoadingMessages(true);
+    async (roomId: string, offset = 0, append = false) => {
+      // Prevent concurrent requests for the same room
+      if (loadingRef.current[roomId]) return;
+      
+      loadingRef.current[roomId] = true;
+      if (offset === 0) {
+        setIsLoadingMessagesByRoom((prev) => ({ ...prev, [roomId]: true }));
+      } else {
+        setIsLoadingMoreMessages((prev) => ({ ...prev, [roomId]: true }));
+      }
+      
       try {
+        const pageSize = 50;
         const response = await fetch(
-          `/api/messages?room_id=${encodeURIComponent(roomId)}&limit=100&offset=0`,
+          `/api/messages?room_id=${encodeURIComponent(roomId)}&limit=${pageSize}&offset=${offset}`,
         );
         const data = await response.json();
         if (!response.ok || data.error) {
           throw new Error(data.error || "Failed to fetch messages");
         }
 
-        const parsed = (data.messages || [])
-          .map(transformToChatMessage)
+        const fetchedMessages = data.messages || [];
+        const messageMap = new Map<string, DBMessage>();
+        fetchedMessages.forEach((m: DBMessage) => messageMap.set(m.id, m));
+
+        const parsed = fetchedMessages
+          .map((m: DBMessage) => {
+            const chatMsg = transformToChatMessage(m);
+            if (m.reply_to_id && (!chatMsg.replyTo || chatMsg.replyTo.text === "Original message")) {
+              const parent = messageMap.get(m.reply_to_id);
+              if (parent) {
+                chatMsg.replyTo = {
+                  id: parent.id,
+                  text: parent.content,
+                  sender: parent.user_id === currentUser?.id ? "You" : (parent.profiles?.display_name || "Them"),
+                };
+              }
+            }
+            return chatMsg;
+          })
           .reverse();
 
         setMessagesByChat((prev) => ({
           ...prev,
-          [roomId]: parsed,
+          [roomId]: append ? [...parsed, ...(prev[roomId] || [])] : parsed,
+        }));
+
+        setMessageOffsets((prev) => ({
+          ...prev,
+          [roomId]: offset + fetchedMessages.length,
+        }));
+
+        setHasMoreMessages((prev) => ({
+          ...prev,
+          [roomId]: fetchedMessages.length === pageSize,
         }));
       } catch (error) {
         console.error("Failed to fetch messages", error);
-        setMessagesByChat((prev) => ({
-          ...prev,
-          [roomId]: [],
-        }));
+        if (!append) {
+          setMessagesByChat((prev) => ({
+            ...prev,
+            [roomId]: [],
+          }));
+        }
       } finally {
-        setIsLoadingMessages(false);
+        loadingRef.current[roomId] = false;
+        setIsLoadingMessagesByRoom((prev) => ({ ...prev, [roomId]: false }));
+        setIsLoadingMoreMessages((prev) => ({ ...prev, [roomId]: false }));
       }
     },
     [transformToChatMessage],
+  );
+
+  const loadMoreMessages = useCallback(
+    async (roomId: string) => {
+      // Guard against concurrent requests and missing data
+      if (
+        loadingRef.current[roomId] ||
+        isLoadingMoreMessages[roomId] ||
+        !hasMoreMessages[roomId]
+      ) {
+        return;
+      }
+      
+      const currentOffset = messageOffsets[roomId] || 0;
+      await fetchMessagesForRoom(roomId, currentOffset, true);
+    },
+    [isLoadingMoreMessages, hasMoreMessages, messageOffsets, fetchMessagesForRoom],
   );
 
   const fetchMemberCount = useCallback(async (roomId: string) => {
@@ -273,6 +631,30 @@ export default function ChatPage() {
     fetchRooms();
   }, [fetchCurrentUser, fetchRooms]);
 
+  // Sync selected group with browser back / forward navigation.
+  // When the user presses Back or Forward, the URL's ?group= param changes and
+  // searchParams updates (Next.js router), so we read from it reactively.
+  useEffect(() => {
+    const urlGroupId = searchParams.get("group");
+
+    // Skip during the initial room load — fetchRooms handles that case.
+    if (!deepLinkApplied.current) return;
+
+    setSelectedChatId((prev) => {
+      if (!urlGroupId) {
+        // URL no longer has a group param — deselect.
+        return null;
+      }
+      if (urlGroupId === prev) {
+        // Already selected — no change needed.
+        return prev;
+      }
+      // Switch to the group referenced by the URL.
+      setDeepLinkError(null);
+      return urlGroupId;
+    });
+  }, [searchParams]);
+
   useEffect(() => {
     if (!selectedChatId) return;
 
@@ -291,17 +673,40 @@ export default function ChatPage() {
     fetchMemberCount,
   ]);
 
+  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    if (scrollContainerRef.current) {
-      const container = scrollContainerRef.current;
-      container.scrollTop = container.scrollHeight;
+    const messageContainer = document.querySelector('[data-message-container="true"]');
+    if (messageContainer && selectedChatId) {
+      const isLoadingMore = isLoadingMoreMessages[selectedChatId];
+      if (!isLoadingMore) {
+        requestAnimationFrame(() => {
+          messageContainer.scrollTop = messageContainer.scrollHeight;
+        });
+      }
     }
-  }, [selectedChatId, messagesByChat]);
+  }, [selectedChatId, messagesByChat, isLoadingMoreMessages]);
 
   const handleSelectChat = useCallback((chatId: string) => {
     setSelectedChatId(chatId);
+    setDeepLinkError(null);
+    setReplyingToMessage(null);
     setMobileSidebarOpen(false);
     setActiveMobileTab("conversation");
+
+    // Reflect the selected group in the URL without a full page reload so
+    // users can share/bookmark the link and browser back/forward works.
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("group", chatId);
+    router.push(`/chat?${params.toString()}`, { scroll: false });
+  }, [router, searchParams]);
+
+  const handleReplyToMessage = useCallback((message: ChatMessage) => {
+    setReplyingToMessage(message);
+    composerInputRef.current?.focus();
+  }, []);
+
+  const handleCancelReply = useCallback(() => {
+    setReplyingToMessage(null);
   }, []);
 
   const isMobileSidebarVisible =
@@ -316,6 +721,8 @@ export default function ChatPage() {
       return;
     }
 
+    const currentReply = replyingToMessage;
+    const currentChat = chats.find((chat) => chat.id === selectedChatId);
     const tempId = `temp_${Date.now()}`;
     const optimisticMessage: ChatMessage = {
       id: tempId,
@@ -327,13 +734,23 @@ export default function ChatPage() {
         hour12: false,
       }),
       status: "sending",
+      replyTo: currentReply
+        ? {
+            id: currentReply.id,
+            text: currentReply.text,
+            sender: currentReply.author === "me" ? "You" : (currentReply.senderName || currentChat?.name || "them"),
+          }
+        : null,
     };
 
     setMessagesByChat((prev) => ({
       ...prev,
       [selectedChatId]: [...(prev[selectedChatId] || []), optimisticMessage],
     }));
+    cancelPendingDraftSave();
     setInputMessage("");
+    setReplyingToMessage(null);
+    setIsDraftSaved(false);
     setIsSending(true);
 
     try {
@@ -343,6 +760,7 @@ export default function ChatPage() {
         body: JSON.stringify({
           room_id: selectedChatId,
           content: trimmedMessage,
+          reply_to_id: currentReply?.id || null,
         }),
       });
 
@@ -352,8 +770,15 @@ export default function ChatPage() {
         throw new Error(data.error || "Failed to send message");
       }
 
+      // The message reached the backend, so the draft is no longer needed.
+      clearDraft(selectedChatId);
+      setIsDraftSaved(false);
+
       const savedMessage: ChatMessage = data.message
-        ? transformToChatMessage(data.message)
+        ? {
+            ...transformToChatMessage(data.message),
+            replyTo: optimisticMessage.replyTo,
+          }
         : { ...optimisticMessage, status: "sent" };
 
       setMessagesByChat((prev) => ({
@@ -378,6 +803,10 @@ export default function ChatPage() {
     } catch (error: any) {
       handleAppError(error, "SEND_MESSAGE");
 
+      // Sending failed: restore the text and its draft so nothing is lost.
+      setInputMessage(trimmedMessage);
+      setIsDraftSaved(setDraft(selectedChatId, trimmedMessage));
+
       setMessagesByChat((prev) => ({
         ...prev,
         [selectedChatId]: (prev[selectedChatId] || []).filter(
@@ -387,10 +816,15 @@ export default function ChatPage() {
     } finally {
       setIsSending(false);
     }
-  }, [inputMessage, selectedChatId, transformToChatMessage]);
+  }, [inputMessage, selectedChatId, replyingToMessage, transformToChatMessage, chats, cancelPendingDraftSave]);
 
   const handleComposerKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key === "Escape" && replyingToMessage) {
+        event.preventDefault();
+        setReplyingToMessage(null);
+        return;
+      }
       if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
         void handleSendMessage();
@@ -401,7 +835,7 @@ export default function ChatPage() {
         void handleSendMessage();
       }
     },
-    [handleSendMessage],
+    [handleSendMessage, replyingToMessage],
   );
 
   // Global Keyboard Shortcut Listener
@@ -414,11 +848,14 @@ export default function ChatPage() {
         return;
       }
 
-      // Esc -> Close active modals, dropdowns, or sidebars
+      // Esc -> Close active modals, dropdowns, reply mode, or sidebars
       if (event.key === "Escape") {
         // The forward dialog (Radix) handles its own Escape.
         if (forwardMessageId) return;
         if (roomMembersOpen) {
+        if (replyingToMessage) {
+          setReplyingToMessage(null);
+        } else if (roomMembersOpen) {
           setRoomMembersOpen(false);
         } else if (mobileSidebarOpen) {
           setMobileSidebarOpen(false);
@@ -463,6 +900,7 @@ export default function ChatPage() {
       toast.error("Couldn't copy message");
     }
   }, []);
+  }, [roomMembersOpen, mobileSidebarOpen, replyingToMessage]);
 
   const filteredChats = useMemo(() => {
     if (!query.trim()) return chats;
@@ -481,9 +919,55 @@ export default function ChatPage() {
 
   const messages = selectedChat ? messagesByChat[selectedChat.id] || [] : [];
 
+  // Filter messages by search query (client-side, over loaded messages)
+  const filteredMessages = useMemo(() => {
+    if (!messageSearchQuery.trim()) return messages;
+    const lowered = messageSearchQuery.toLowerCase();
+    return messages.filter((msg) =>
+      msg.text.toLowerCase().includes(lowered),
+    );
+  }, [messages, messageSearchQuery]);
+
+  const handleCloseSearch = useCallback(() => {
+    setMessageSearchOpen(false);
+    setMessageSearchQuery("");
+  }, []);
+
+  // Reset search when switching rooms
+  useEffect(() => {
+    setMessageSearchQuery("");
+    setMessageSearchOpen(false);
+  }, [selectedChatId]);
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Header />
+
+      <StellarNetworkStatus variant="banner" />
+      <WalletNetworkWarning variant="banner" />
+
+      {/* Deep-link error banner — shown when URL contains an inaccessible group */}
+      {deepLinkError && (
+        <div
+          role="alert"
+          className="flex items-center gap-3 px-4 py-2.5 bg-destructive/10 border-b border-destructive/20 text-sm text-destructive"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="flex-1">
+            {deepLinkError === "unauthorized"
+              ? "You don't have access to the requested group. Showing your first available group instead."
+              : "The requested group no longer exists or could not be found."}
+          </span>
+          <button
+            type="button"
+            onClick={() => setDeepLinkError(null)}
+            className="shrink-0 p-1 rounded hover:bg-destructive/20 transition-colors"
+            aria-label="Dismiss"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       <main className="flex-1 pt-24 pb-24 md:pb-8 px-3 sm:px-6">
         <div className="mx-auto w-full max-w-7xl h-[min(84vh,820px)] rounded-3xl border border-border/70 bg-card/90 shadow-[0_24px_64px_-24px_rgba(0,0,0,0.35)] backdrop-blur-sm overflow-hidden">
@@ -539,33 +1023,58 @@ export default function ChatPage() {
                           type="button"
                           onClick={() => handleSelectChat(chat.id)}
                           className={cn(
-                            "w-full text-left p-3 rounded-xl transition mb-1",
-                            "border border-transparent hover:bg-muted/40",
-                            isActive && "bg-primary/10 border-primary/25",
+                            "w-full text-left p-3 rounded-xl transition-all duration-150 mb-1",
+                            "border hover:bg-muted/40",
+                            isActive
+                              ? "bg-primary/10 border-primary/30 shadow-[inset_3px_0_0_hsl(var(--primary))]"
+                              : "border-transparent",
                           )}
                         >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <PresenceIndicator status={chat.status} />
-                                <p className="font-medium text-sm truncate">
-                                  {chat.name}
-                                </p>
-                              </div>
-                              <p className="text-xs text-muted-foreground truncate mt-1">
-                                {chat.lastMessage}
-                              </p>
+                          <div className="flex items-start gap-2.5">
+                            <div
+                              className={cn(
+                                "shrink-0 h-9 w-9 rounded-full flex items-center justify-center text-sm font-semibold uppercase select-none",
+                                isActive
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-muted text-muted-foreground",
+                              )}
+                            >
+                              {chat.name.charAt(0)}
                             </div>
 
-                            <div className="shrink-0 text-right">
-                              <p className="text-[11px] text-muted-foreground">
-                                {chat.lastSeen}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <PresenceIndicator status={chat.status} />
+                                  <p
+                                    className={cn(
+                                      "text-sm truncate",
+                                      isActive
+                                        ? "font-semibold text-foreground"
+                                        : "font-medium",
+                                    )}
+                                  >
+                                    {chat.name}
+                                  </p>
+                                  <GroupVerificationBadge
+                                    groupId={chat.id}
+                                    showLabel={false}
+                                  />
+                                </div>
+                                <div className="shrink-0 flex flex-col items-end gap-1">
+                                  <p className="text-[11px] text-muted-foreground whitespace-nowrap">
+                                    {chat.lastSeen}
+                                  </p>
+                                  {chat.unreadCount > 0 && (
+                                    <span className="inline-flex items-center justify-center min-w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold px-1.5">
+                                      {chat.unreadCount}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <p className="text-xs text-muted-foreground truncate mt-0.5">
+                                {chat.lastMessage}
                               </p>
-                              {chat.unreadCount > 0 && (
-                                <span className="inline-flex items-center justify-center min-w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold mt-1 px-1.5">
-                                  {chat.unreadCount}
-                                </span>
-                              )}
                             </div>
                           </div>
                         </button>
@@ -612,15 +1121,27 @@ export default function ChatPage() {
                         <button
                           type="button"
                           className="hidden md:inline-flex items-center justify-center h-9 w-9 rounded-lg border border-border/80"
-                          onClick={() => setSelectedChatId(null)}
+                          onClick={() => {
+                            setSelectedChatId(null);
+                            // Remove the group param from the URL so the
+                            // address bar reflects the deselected state and
+                            // the back-button can restore it.
+                            const params = new URLSearchParams(searchParams.toString());
+                            params.delete("group");
+                            const qs = params.toString();
+                            router.push(qs ? `/chat?${qs}` : "/chat", { scroll: false });
+                          }}
                         >
                           <ArrowLeft className="h-4 w-4" />
                         </button>
 
                         <div className="min-w-0">
-                          <p className="font-semibold truncate">
-                            {selectedChat.name}
-                          </p>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <p className="font-semibold truncate">
+                              {selectedChat.name}
+                            </p>
+                            <GroupVerificationBadge groupId={selectedChat.id} />
+                          </div>
                           <p className="text-xs text-muted-foreground truncate">
                             {memberCountByRoom[selectedChat.id] !== undefined
                               ? `${memberCountByRoom[selectedChat.id]} members`
@@ -630,32 +1151,109 @@ export default function ChatPage() {
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setRoomMembersOpen(true)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40"
-                      >
-                        <Users className="h-3.5 w-3.5" />
-                        Members
-                      </button>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsAdmin(!isAdmin)}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs transition-colors",
+                            isAdmin
+                              ? "border-primary/50 bg-primary/10 text-primary font-medium"
+                              : "border-border/80 text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                          )}
+                          title={
+                            isAdmin
+                              ? "Admin mode active (pin/unpin enabled)"
+                              : "Enable admin mode to pin messages"
+                          }
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                          {isAdmin ? "Admin" : "Member"}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setAuditTrailOpen(true)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                        >
+                          <ScrollText className="h-3.5 w-3.5" />
+                          Audit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMemberPanelMobileOpen(true)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                        >
+                          <Users className="h-3.5 w-3.5" />
+                          Members
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRoomMembersOpen(true)}
+                          className="hidden lg:inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                        >
+                          Manage
+                        </button>
+                      </div>
                     </div>
                   </header>
 
-                  <div
-                    ref={scrollContainerRef}
-                    className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 bg-gradient-to-b from-background/40 to-background"
-                  >
-                    {isLoadingMessages && (
-                      <div className="h-full flex items-center justify-center text-muted-foreground">
-                        <Loader2 className="h-5 w-5 animate-spin" />
+                  {/* Pinned Messages Banner */}
+                  {selectedChat && pinnedIds.length > 0 && (
+                    <div className="px-4 py-2 bg-card/90 border-b border-border/70 flex items-center justify-between gap-3 text-xs shadow-sm backdrop-blur-sm">
+                      <div
+                        onClick={() =>
+                          activePinnedMessage &&
+                          handleScrollToMessage(activePinnedMessage.id)
+                        }
+                        className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer hover:opacity-85 transition"
+                        title="Click to jump to original message"
+                      >
+                        <div className="p-1.5 rounded-full bg-primary/15 text-primary shrink-0">
+                          <Pin className="h-3.5 w-3.5 rotate-45" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-primary text-[11px] uppercase tracking-wide">
+                              Pinned Message{" "}
+                              {pinnedMessages.length > 1
+                                ? `(${activePinnedIndex + 1}/${pinnedMessages.length})`
+                                : ""}
+                            </span>
+                          </div>
+                          <p className="text-foreground/90 truncate font-medium text-xs mt-0.5">
+                            {activePinnedMessage
+                              ? activePinnedMessage.text
+                              : "Pinned message"}
+                          </p>
+                        </div>
                       </div>
-                    )}
 
-                    {!isLoadingMessages && messages.length === 0 && (
-                      <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                        No messages yet. Start the conversation.
-                      </div>
-                    )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {pinnedMessages.length > 1 && (
+                          <div className="flex items-center gap-0.5 mr-1 border-r border-border/60 pr-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handlePrevPinned(selectedChat.id, pinnedMessages.length)
+                              }
+                              className="p-1 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition"
+                              aria-label="Previous pinned message"
+                            >
+                              <ChevronLeft className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleNextPinned(selectedChat.id, pinnedMessages.length)
+                              }
+                              className="p-1 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition"
+                              aria-label="Next pinned message"
+                            >
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )}
 
                     {!isLoadingMessages &&
                       messages.map((message) => (
@@ -701,13 +1299,116 @@ export default function ChatPage() {
                                 ? "text-primary-foreground/80"
                                 : "text-muted-foreground",
                             )}
+                        {isAdmin && activePinnedMessage && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              togglePinMessage(selectedChat.id, activePinnedMessage.id)
+                            }
+                            className="p-1 text-muted-foreground hover:text-destructive hover:bg-muted/50 rounded-md transition"
+                            title="Unpin message"
+                            aria-label="Unpin message"
                           >
-                            <span>{message.time}</span>
-                            {message.author === "me" && (
-                              <span>
-                                {message.status === "sending" ? "..." : "✓✓"}
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Collapsible message search bar */}
+                  <MessageSearchBar
+                    isVisible={messageSearchOpen}
+                    value={messageSearchQuery}
+                    onChange={setMessageSearchQuery}
+                    onClose={handleCloseSearch}
+                    resultCount={filteredMessages.length}
+                  />
+
+                  <div className="px-4 sm:px-5 pt-3">
+                    <RoomActivityPanel roomId={selectedChatId} />
+                  </div>
+
+                   <div
+                     ref={scrollContainerRef}
+                     data-message-container="true"
+                     className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 bg-gradient-to-b from-background/40 to-background"
+                     onScroll={(e) => {
+                       const container = e.currentTarget;
+                       // Load more when scrolled near top (within 100px)
+                       if (container.scrollTop < 100 && selectedChatId && !isLoadingMoreMessages[selectedChatId]) {
+                         loadMoreMessages(selectedChatId);
+                       }
+                     }}
+                   >
+                     {/* Loading indicator for pagination */}
+                     {isLoadingMoreMessages[selectedChatId || ''] && (
+                       <div className="flex justify-center py-2">
+                         <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                       </div>
+                     )}
+
+                     {/* Beginning of conversation indicator — only when not searching */}
+                     {!messageSearchQuery.trim() && !hasMoreMessages[selectedChatId || ''] && messages.length > 0 && (
+                       <p className="text-center text-muted-foreground text-xs py-2">
+                         Beginning of conversation
+                       </p>
+                     )}
+
+                     {isLoadingMessagesByRoom[selectedChatId || ''] && (
+                       <div className="h-full flex items-center justify-center text-muted-foreground">
+                         <Loader2 className="h-5 w-5 animate-spin" />
+                       </div>
+                     )}
+
+                     {!isLoadingMessagesByRoom[selectedChatId || ''] && messages.length === 0 && (
+                       <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                         No messages yet. Start the conversation.
+                       </div>
+                     )}
+
+                     {/* Search: no results state */}
+                     {!isLoadingMessagesByRoom[selectedChatId || ''] &&
+                       messageSearchQuery.trim() &&
+                       filteredMessages.length === 0 && (
+                         <div className="h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                           <Search className="h-8 w-8 opacity-30" />
+                           <p className="text-sm">No messages match &ldquo;{messageSearchQuery}&rdquo;</p>
+                         </div>
+                       )}
+
+                     {!isLoadingMessagesByRoom[selectedChatId || ''] &&
+                        filteredMessages.map((message) => (
+                          <ChatMessageBubble 
+                            key={message.id} 
+                            message={message} 
+                            searchQuery={messageSearchQuery}
+                            isPinned={pinnedIds.includes(message.id)}
+                            isAdmin={isAdmin}
+                            onTogglePin={(msgId) => togglePinMessage(selectedChat.id, msgId)}
+                            isHighlighted={highlightedMessageId === message.id}
+                            onReply={handleReplyToMessage}
+                            onJumpToMessage={handleScrollToMessage}
+                          />
+                        ))}
+                   </div>
+
+                  <div className="border-t border-border/70 bg-card/80 backdrop-blur-sm">
+                    {replyingToMessage && (
+                      <div className="px-4 py-2 bg-muted/60 border-b border-border/60 flex items-center justify-between gap-3 text-xs animate-in fade-in slide-in-from-bottom-2 duration-200">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div className="p-1 rounded-md bg-primary/10 text-primary shrink-0">
+                            <Reply className="h-3.5 w-3.5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-primary text-[11px]">
+                                Replying to {replyingToMessage.author === "me" ? "yourself" : (replyingToMessage.senderName || selectedChat.name || "message")}
                               </span>
-                            )}
+                            </div>
+                            <p className="text-muted-foreground truncate text-xs mt-0.5">
+                              {replyingToMessage.text}
+                            </p>
                           </div>
                         </div>
                           </ContextMenu.Trigger>
@@ -732,9 +1433,29 @@ export default function ChatPage() {
                         </ContextMenu.Root>
                       ))}
                   </div>
+                        <button
+                          type="button"
+                          onClick={handleCancelReply}
+                          className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition"
+                          title="Cancel reply (Esc)"
+                          aria-label="Cancel reply"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
 
-                  <div className="p-3 sm:p-4 border-t border-border/70 bg-card/80 backdrop-blur-sm">
-                    <div className="flex items-end gap-2 sm:gap-3">
+                    {isDraftSaved && (
+                      <div
+                        className="px-4 pt-2 flex items-center justify-end gap-1 text-[11px] text-muted-foreground animate-in fade-in"
+                        aria-live="polite"
+                      >
+                        <Check className="h-3 w-3 text-emerald-500" />
+                        Draft saved
+                      </div>
+                    )}
+
+                    <div className="p-3 sm:p-4 flex items-end gap-2 sm:gap-3">
                       <button
                         type="button"
                         className="h-10 w-10 shrink-0 rounded-full border border-border/80 flex items-center justify-center text-muted-foreground hover:bg-muted/40"
@@ -749,10 +1470,9 @@ export default function ChatPage() {
                       </button>
 
                       <textarea
+                        ref={composerInputRef}
                         value={inputMessage}
-                        onChange={(event) =>
-                          setInputMessage(event.target.value)
-                        }
+                        onChange={handleComposerChange}
                         onKeyDown={handleComposerKeyDown}
                         rows={1}
                         placeholder="Type a message (Ctrl+Enter to send)"
@@ -787,10 +1507,22 @@ export default function ChatPage() {
                       if (!open) setForwardMessageId(null);
                     }}
                     onForwarded={handleMessageForwarded}
+                  <GroupAuditDialog
+                    groupId={selectedChat.id}
+                    open={auditTrailOpen}
+                    onOpenChange={setAuditTrailOpen}
                   />
                 </>
               )}
             </section>
+            {selectedChat && (
+              <MemberPanel
+                roomId={selectedChat.id}
+                mobileOpen={memberPanelMobileOpen}
+                onMobileOpenChange={setMemberPanelMobileOpen}
+                className="h-full"
+              />
+            )}
           </div>
         </div>
 
@@ -831,5 +1563,23 @@ export default function ChatPage() {
       </main>
       <Footer />
     </div>
+  );
+}
+
+/**
+ * Wraps ChatPageInner in a Suspense boundary, which is required by Next.js
+ * whenever a client component calls useSearchParams().
+ */
+export default function ChatPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center text-muted-foreground">
+          <Loader2 className="h-6 w-6 animate-spin" />
+        </div>
+      }
+    >
+      <ChatPageInner />
+    </Suspense>
   );
 }

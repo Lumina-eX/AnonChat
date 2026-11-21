@@ -5,7 +5,42 @@
  * endpoints that implement cryptographic wallet signature verification.
  */
 
-import type { Session, User } from '@supabase/supabase-js';
+/**
+ * Supabase Session type
+ */
+export interface Session {
+  access_token: string;
+  token_type: string;
+  expires_in?: number;
+  refresh_token?: string;
+  user?: User;
+}
+
+/**
+ * Supabase User type  
+ */
+export interface User {
+  id: string;
+  aud?: string;
+  email?: string;
+  email_confirmed_at?: string;
+  phone?: string;
+  confirmed_at?: string;
+  last_sign_in_at?: string;
+  app_metadata?: Record<string, unknown>;
+  user_metadata?: Record<string, unknown>;
+  identities?: Array<{
+    identity_id: string;
+    id: string;
+    user_id: string;
+    identity_data?: Record<string, unknown>;
+    provider: string;
+    created_at?: string;
+    updated_at?: string;
+  }>;
+  created_at?: string;
+  updated_at?: string;
+}
 
 /**
  * Request body for POST /api/auth/nonce
@@ -67,4 +102,27 @@ export interface WalletLoginResponse {
 export interface ErrorResponse {
   /** Human-readable error message */
   error: string;
+}
+/**
+ * Request body for routes protected by signed message verification middleware.
+ * Used with verifySignedMessage() from signed-message-middleware.ts
+ */
+export interface SignedActionRequest {
+  /** Stellar public key (56 characters, starts with 'G') */
+  walletAddress: string;
+  /** The plaintext message that was signed */
+  message: string;
+  /** Hex-encoded Ed25519 signature of the message */
+  signature: string;
+}
+
+/**
+ * Audit log entry shape for sensitive actions
+ */
+export interface AuditLogEntry {
+  audit: true;
+  action: string;
+  wallet: string;
+  timestamp: string;
+  [key: string]: unknown;
 }

@@ -1,11 +1,15 @@
 import { createClient } from "@/lib/supabase/server"
+import { recordGroupAuditEvent } from "@/lib/blockchain/audit"
 import {
   checkAndConsumeWalletMessageSlot,
   formatRateLimitWindow,
   getWalletRateLimitKey,
   resolveWalletMessageRatePolicy,
 } from "@/lib/wallet-message-rate-limit"
+import { getRoomTTL } from "@/lib/ephemeral-cleanup"
 import { type NextRequest, NextResponse } from "next/server"
+import { validateMessage, ValidationErrorType } from "@/lib/middleware/message-validation"
+import { insertMessageIdempotent } from "@/lib/messages/idempotency"
 
 export async function GET(request: NextRequest) {
   try {
@@ -113,6 +117,96 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
+export async function PUT(request: NextRequest) {
+  try {
+    const supabase = await createClient()
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    const body = await request.json()
+    const { id, content, editWindowMinutes } = body
+
+    if (!id || typeof content !== "string") {
+      return NextResponse.json({ error: "id and content are required" }, { status: 400 })
+    }
+
+    // Validate message content for edits
+    const validation = validateMessage({ content, id }, 'http')
+    if (!validation.isValid) {
+      const statusCode = validation.error?.type === ValidationErrorType.MESSAGE_TOO_LONG ? 413 : 400
+      return NextResponse.json(
+        {
+          error: validation.error?.message,
+          type: validation.error?.type,
+          details: validation.error?.details,
+        },
+        { status: statusCode }
+      )
+    }
+
+    // Use sanitized content
+    const sanitizedContent = validation.sanitized?.content || content
+
+    const windowMinutes = Number(editWindowMinutes ?? process.env.MESSAGE_EDIT_WINDOW_MINUTES ?? 5)
+    const windowMs = windowMinutes * 60 * 1000
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from("messages")
+      .select("id, user_id, created_at")
+      .eq("id", id)
+      .maybeSingle()
+
+    if (fetchErr) throw fetchErr
+    if (!existing) {
+      return NextResponse.json({ error: "Message not found" }, { status: 404 })
+    }
+
+    if (existing.user_id !== user.id) {
+      return NextResponse.json({ error: "Forbidden. You can only edit your own messages." }, { status: 403 })
+    }
+
+    const createdAt = new Date(existing.created_at as string).getTime()
+    const now = Date.now()
+    const elapsedMs = now - createdAt
+
+    if (elapsedMs < 0 || elapsedMs > windowMs) {
+      return NextResponse.json(
+        {
+          error: "Edit window expired",
+          code: "EDIT_WINDOW_EXPIRED",
+          elapsedMs,
+          windowMs,
+        },
+        { status: 403 },
+      )
+    }
+
+    const { data, error } = await supabase
+      .from("messages")
+      .update({
+        content: sanitizedContent,
+        edited_at: new Date(now).toISOString(),
+      })
+      .eq("id", id)
+      .select()
+
+    if (error) throw error
+    if (!data || data.length === 0) {
+      return NextResponse.json({ error: "Failed to update message" }, { status: 500 })
+    }
+
+    return NextResponse.json({ message: data[0], success: true })
+  } catch (error) {
+    console.error("[v0] PUT /api/messages error:", error)
+    return NextResponse.json({ error: "Failed to edit message" }, { status: 500 })
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
@@ -125,11 +219,39 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { room_id, content } = body
+    const {
+      room_id,
+      content,
+      is_ephemeral = false,
+      reply_to_id = null,
+      // Optional client-generated UUID. When provided, the server will return
+      // the existing message instead of inserting a duplicate on retries.
+      idempotency_key,
+    } = body
 
     if (!room_id || !content) {
       return NextResponse.json({ error: "room_id and content are required" }, { status: 400 })
     }
+
+    // Validate message content (idempotency_key passes through as an optional field)
+    const validation = validateMessage(
+      { content, roomId: room_id, ...(idempotency_key ? { idempotency_key } : {}) },
+      "http",
+    )
+    if (!validation.isValid) {
+      const statusCode = validation.error?.type === ValidationErrorType.MESSAGE_TOO_LONG ? 413 : 400
+      return NextResponse.json(
+        {
+          error: validation.error?.message,
+          type: validation.error?.type,
+          details: validation.error?.details,
+        },
+        { status: statusCode },
+      )
+    }
+
+    // Use sanitized content
+    const sanitizedContent = validation.sanitized?.content || content
 
     const walletKey = getWalletRateLimitKey(user)
     const policy = resolveWalletMessageRatePolicy(walletKey, room_id)
@@ -160,32 +282,74 @@ export async function POST(request: NextRequest) {
     if (membership?.removed_at) {
       return NextResponse.json(
         { error: "You have been removed from this room and cannot send messages" },
-        { status: 403 }
+        { status: 403 },
       )
     }
 
     if (!membership) {
-      const { error: insertMemberErr } = await supabase.from("room_members").insert({
-        room_id,
-        user_id: user.id,
-      })
+      const { data: insertedMembership, error: insertMemberErr } = await supabase
+        .from("room_members")
+        .insert({
+          room_id,
+          user_id: user.id,
+        })
+        .select("id")
+        .single()
       if (insertMemberErr) throw insertMemberErr
+
+      await recordGroupAuditEvent({
+        supabase,
+        groupId: room_id,
+        eventType: "member_joined",
+        actorUserId: user.id,
+        targetUserId: user.id,
+        metadata: {
+          membership_id: insertedMembership?.id ?? null,
+          source: "message_send_auto_join",
+        },
+      })
     }
 
-    const { data, error } = await supabase
-      .from("messages")
-      .insert({
-        user_id: user.id,
-        room_id,
-        content,
-        is_encrypted: false,
-        status: "sent",
-      })
-      .select()
+    // Prepare message data
+    const messageData: Record<string, unknown> = {
+      user_id: user.id,
+      room_id,
+      content: sanitizedContent,
+      is_encrypted: false,
+      status: "sent",
+    }
 
-    if (error) throw error
+    if (reply_to_id) {
+      messageData.reply_to_id = reply_to_id
+    }
 
-    return NextResponse.json({ message: data[0], success: true }, { status: 201 })
+    // Handle ephemeral messages
+    if (is_ephemeral) {
+      const ttl = await getRoomTTL(room_id)
+      messageData.is_ephemeral = true
+      messageData.expires_at = new Date(Date.now() + ttl * 1000).toISOString()
+    }
+
+    // Attach idempotency key when the client provided one
+    if (idempotency_key) {
+      messageData.idempotency_key = idempotency_key
+    }
+
+    // --- Idempotent insert ---
+    // insertMessageIdempotent performs a pre-check for the key, then inserts.
+    // On a concurrent collision (race condition) it catches the 23505 unique
+    // violation and returns the winning row, so the client always receives a
+    // valid message object regardless of how many retries were made.
+    const { message: savedMessage, isDuplicate, error: insertError } =
+      await insertMessageIdempotent(supabase, messageData as any, "http")
+
+    if (insertError || !savedMessage) {
+      throw new Error(insertError ?? "Insert returned no data")
+    }
+
+    // 200 for duplicate (idempotent replay), 201 for new creation
+    const status = isDuplicate ? 200 : 201
+    return NextResponse.json({ message: savedMessage, success: true, duplicate: isDuplicate }, { status })
   } catch (error) {
     console.error("[v0] POST /api/messages error:", error)
     return NextResponse.json({ error: "Failed to create message" }, { status: 500 })

@@ -159,6 +159,9 @@ export function useWebSocketSend() {
     notifyStopTyping: useCallback((roomId: string) => {
       client.current.notifyStopTyping(roomId);
     }, []),
+    requestPresenceSnapshot: useCallback(() => {
+      client.current.requestPresenceSnapshot();
+    }, []),
     /**
      * Resolves Job 72843331390 by calling the newly added method in WebSocketClient.
      */
@@ -174,6 +177,9 @@ export function useWebSocketSend() {
      */
     markAsDelivered: useCallback((messageId: string, roomId: string) => {
       client.current.markAsDelivered(messageId, roomId);
+    }, []),
+    editMessage: useCallback((messageId: string, roomId: string, content: string) => {
+      return client.current.editMessage(messageId, roomId, content);
     }, []),
   };
 }

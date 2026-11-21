@@ -20,6 +20,7 @@ export {
   sendWebSocketMessage,
   notifyWebSocketTyping,
   notifyWebSocketStopTyping,
+  requestWebSocketPresenceSnapshot,
   notifyWebSocketWalletEvent,
   getWebSocketStatus,
   isWebSocketConnected,

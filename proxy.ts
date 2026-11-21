@@ -1,8 +1,14 @@
+import { enforceWalletApiAuth } from "@/lib/auth/wallet-jwt-middleware"
 import { updateSession } from "@/lib/supabase/proxy"
 import type { NextRequest } from "next/server"
 
 export async function proxy(request: NextRequest) {
-  return await updateSession(request)
+  const walletAuth = await enforceWalletApiAuth(request)
+  if (!walletAuth.ok) {
+    return walletAuth.response
+  }
+
+  return await updateSession(walletAuth.request)
 }
 
 export const config = {

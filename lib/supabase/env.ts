@@ -8,6 +8,7 @@ export function requireEnv(key: string): string {
       SUPABASE_URL: "https://dummy.supabase.co",
       SUPABASE_ANON_KEY: "dummy-anon-key-for-demo",
       SUPABASE_SERVICE_ROLE_KEY: "dummy-service-role-key-for-demo",
+      WALLET_JWT_SECRET: "anonchat-wallet-jwt-dev-secret-change-in-production",
     }
     return defaults[key] || ""
   }

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.com/vercel.json",
+  "crons": [
+    {
+      "path": "/api/ephemeral/cron",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}

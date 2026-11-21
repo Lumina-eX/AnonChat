@@ -3,7 +3,7 @@ import { toast } from "react-hot-toast";
 /**
  * Valid error contexts to ensure consistent categorization across the app.
  */
-export type ErrorContext = "WALLET_CONNECT" | "SEND_MESSAGE" | "NETWORK";
+export type ErrorContext = "WALLET_CONNECT" | "SEND_MESSAGE" | "NETWORK" | "NETWORK_MISMATCH" | "SESSION_EXPIRED";
 
 /**
  * Global error handler that logs technical details for developers
@@ -27,6 +27,14 @@ export const handleAppError = (error: any, context: ErrorContext) => {
     case "NETWORK":
       userFriendlyMessage =
         "Network error. Please check your internet connection.";
+      break;
+    case "NETWORK_MISMATCH":
+      userFriendlyMessage =
+        "Wrong Stellar network detected. Please switch your wallet to the correct network.";
+      break;
+    case "SESSION_EXPIRED":
+      userFriendlyMessage =
+        "Session expired. Please re-authenticate with your wallet.";
       break;
   }
 

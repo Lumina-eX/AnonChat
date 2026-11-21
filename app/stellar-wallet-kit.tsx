@@ -1,5 +1,6 @@
 import {
   FREIGHTER_ID,
+  ALBEDO_ID,
   StellarWalletsKit,
   WalletNetwork,
   FreighterModule,
@@ -8,6 +9,10 @@ import {
   LobstrModule,
   HanaModule,
 } from "@creit.tech/stellar-wallets-kit";
+
+export type DetectedNetwork = "testnet" | "mainnet" | "unknown";
+
+export { FREIGHTER_ID, ALBEDO_ID };
 
 const SELECTED_WALLET_ID = "selectedWalletId";
 const WALLET_CONNECTED = "walletConnected";
@@ -31,6 +36,14 @@ function clearWalletStorage() {
 
 let kit: StellarWalletsKit | null = null;
 
+function getExpectedWalletNetwork(): WalletNetwork {
+  if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_STELLAR_NETWORK) {
+    const env = process.env.NEXT_PUBLIC_STELLAR_NETWORK.toLowerCase();
+    if (env === "testnet") return WalletNetwork.TESTNET;
+  }
+  return WalletNetwork.PUBLIC;
+}
+
 function getKit(): StellarWalletsKit | null {
   if (typeof window === "undefined") return null;
   if (kit) return kit;
@@ -44,7 +57,7 @@ function getKit(): StellarWalletsKit | null {
         new LobstrModule(),
         new HanaModule(),
       ],
-      network: WalletNetwork.PUBLIC,
+      network: getExpectedWalletNetwork(),
       selectedWalletId: getSelectedWalletId() ?? FREIGHTER_ID,
     });
   } catch (e) {
@@ -53,6 +66,49 @@ function getKit(): StellarWalletsKit | null {
   }
 
   return kit;
+}
+
+export function getExpectedNetwork(): DetectedNetwork {
+  const network = getExpectedWalletNetwork();
+  if (network === WalletNetwork.TESTNET) return "testnet";
+  return "mainnet";
+}
+
+export async function detectWalletNetwork(): Promise<DetectedNetwork> {
+  if (typeof window === "undefined") return "unknown";
+
+  const walletId = getSelectedWalletId();
+  if (!walletId) return "unknown";
+
+  try {
+    if (walletId === FREIGHTER_ID) {
+      const module = new FreighterModule();
+      const isAvailable = await module.isAvailable();
+      if (!isAvailable) return "unknown";
+      const { network } = await module.getNetwork();
+      const upper = network.toUpperCase();
+      if (upper === "PUBLIC") return "mainnet";
+      if (upper === "TESTNET" || upper === "TEST") return "testnet";
+      if (network.includes("Test SDF Network")) return "testnet";
+      if (network.includes("Public Global")) return "mainnet";
+      return "unknown";
+    }
+
+    if (walletId === ALBEDO_ID) {
+      const module = new AlbedoModule();
+      const isAvailable = await module.isAvailable();
+      if (!isAvailable) return "unknown";
+      const { network } = await module.getNetwork();
+      const upper = network.toUpperCase();
+      if (upper === "PUBLIC") return "mainnet";
+      if (upper === "TESTNET" || upper === "TEST") return "testnet";
+      return "unknown";
+    }
+  } catch (e) {
+    console.error("Failed to detect wallet network:", e);
+  }
+
+  return "unknown";
 }
 
 export async function signTransaction(...args: any[]) {
@@ -156,3 +212,31 @@ export async function connect(callback?: () => Promise<void>) {
     },
   });
 }
+
+/**
+ * Connects directly to a specific wallet without opening the kit's modal.
+ */
+export async function connectToWallet(walletId: string, callback?: () => Promise<void>) {
+  if (typeof window === "undefined") return;
+
+  const kitInstance = getKit();
+  if (!kitInstance) return;
+
+  try {
+    // Check if wallet is available
+    if (walletId === FREIGHTER_ID) {
+      const freighter = new FreighterModule();
+      const isAvailable = await freighter.isAvailable();
+      if (!isAvailable) {
+        throw new Error("Freighter extension is not installed or enabled.");
+      }
+    }
+
+    await setWallet(walletId);
+    if (callback) await callback();
+  } catch (e: any) {
+    console.error(`Failed to connect to wallet ${walletId}:`, e);
+    throw e;
+  }
+}
+

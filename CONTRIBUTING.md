@@ -28,6 +28,13 @@ cd AnonChat
 git remote add upstream https://github.com/original-owner/AnonChat.git
 git checkout -b fix-[issue-number]
 
+# 3. Install dependencies and setup pre-commit hooks
+npm install
+npx husky install
+
+# 4. Make your changes
+# Your changes will be automatically checked before committing
+
 # 3. Install & develop
 pnpm install
 pnpm dev
@@ -87,6 +94,61 @@ Brief description (1-2 sentences)
 
 Closes #[issue-number]
 ```
+
+## 🪝 Pre-Commit Hooks
+
+This project uses **Husky** to automatically check code before committing.
+
+### What Gets Checked?
+- ✅ TypeScript types - No type errors allowed
+- ✅ ESLint - Code style and best practices
+- ✅ Staged files only - Only your changes are checked
+
+### Setup (Do this once)
+
+```bash
+npm install
+npx husky install
+```
+
+### How It Works
+
+When you commit:
+```bash
+git commit -m "Fix: something"
+```
+
+The hooks automatically:
+1. Check TypeScript types
+2. Run ESLint on your files
+3. Prevent commit if errors found
+
+### Fixing Errors
+
+**TypeScript error?**
+```bash
+npx tsc --noEmit   # See errors
+# Fix them, then:
+git add .
+git commit -m "..."
+```
+
+**ESLint error?**
+```bash
+npx eslint . --fix  # Auto-fix issues
+git add .
+git commit -m "..."
+```
+
+### Skip Hooks (Last Resort)
+
+```bash
+git commit --no-verify
+```
+
+⚠️ Use sparingly! Hooks exist to maintain code quality.
+
+For more details, see [PRE_COMMIT_HOOKS.md](PRE_COMMIT_HOOKS.md)
 
 ## 📋 Code Standards
 

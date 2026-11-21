@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils"
 
-export type PresenceStatus = "online" | "offline" | "recently_active"
+export type PresenceStatus = "online" | "offline" | "recently_active" | "away"
 
 interface PresenceIndicatorProps {
   status: PresenceStatus
@@ -11,6 +11,7 @@ interface PresenceIndicatorProps {
 }
 
 export function PresenceIndicator({ status, className, showText = false }: PresenceIndicatorProps) {
+  const normalizedStatus = status === "away" ? "recently_active" : status
   const statusColors = {
     online: "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]",
     offline: "bg-muted-foreground/40",
@@ -26,17 +27,17 @@ export function PresenceIndicator({ status, className, showText = false }: Prese
   return (
     <div 
       className={cn("flex items-center gap-2", className)}
-      title={statusLabels[status]}
+      title={statusLabels[normalizedStatus]}
     >
       <span
         className={cn(
           "w-2.5 h-2.5 rounded-full ring-2 ring-background transition-all duration-300",
-          statusColors[status]
+          statusColors[normalizedStatus]
         )}
       />
       {showText && (
         <span className="text-xs text-muted-foreground font-medium">
-          {statusLabels[status]}
+          {statusLabels[normalizedStatus]}
         </span>
       )}
     </div>

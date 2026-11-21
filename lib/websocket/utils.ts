@@ -112,6 +112,19 @@ export function notifyWebSocketStopTyping(roomId: string) {
 }
 
 /**
+ * Requests a fresh presence snapshot from the WebSocket server
+ */
+export function requestWebSocketPresenceSnapshot() {
+  const client = getWebSocketClient()
+
+  if (!client.isConnected()) {
+    return
+  }
+
+  client.requestPresenceSnapshot()
+}
+
+/**
  * Notifies a wallet connect/disconnect event
  */
 export function notifyWebSocketWalletEvent(action: "connect" | "disconnect", walletAddress: string) {

@@ -10,6 +10,7 @@ export function useChatSubscription(sdk: any, addMessage: AddMessageFn) {
         text: incomingMsg.content,
         sender: incomingMsg.senderAddress,
         isOwn: false,
+        isEncrypted: false,
       });
     });
     return () => unsubscribe();

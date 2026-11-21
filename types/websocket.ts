@@ -2,6 +2,8 @@
 export type WebSocketServerEventType =
   | "message"
   | "message_status_update"
+  | "message_edit"
+  | "message_read_receipt"
   | "room_join"
   | "room_leave"
   | "user_typing"
@@ -9,8 +11,12 @@ export type WebSocketServerEventType =
   | "wallet_connect"
   | "wallet_disconnect"
   | "presence_update"
+  | "presence_snapshot"
+  | "notification"
+  | "member_removed"
   | "error"
   | "connection_established"
+  | "stellar_transaction_update"
 
 // Client-to-server event types
 export type WebSocketClientEventType =
@@ -19,9 +25,12 @@ export type WebSocketClientEventType =
   | "leave_room"
   | "send_message"
   | "message_delivered"
+  | "edit_message"
+  | "message_read"
   | "typing"
   | "stop_typing"
   | "wallet_event"
+  | "request_presence_snapshot"
   | "pong"
 
 // All event types
@@ -36,6 +45,7 @@ export interface WebSocketMessage {
 export interface UserPresence {
   userId: string
   displayName: string
+  walletAddress?: string
   status: "online" | "offline" | "away"
   lastSeen: number
 }

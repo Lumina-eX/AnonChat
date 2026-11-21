@@ -4,6 +4,11 @@ create table if not exists public.invites (
   room_id text not null references public.rooms(id) on delete cascade,
   created_by uuid not null references auth.users(id) on delete cascade,
   expires_at timestamp with time zone,
+  max_uses integer,
+  use_count integer not null default 0,
+  is_active boolean not null default true,
+  deactivated_at timestamp with time zone,
+  deactivation_reason text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 

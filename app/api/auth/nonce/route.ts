@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate nonce with 5-minute expiration
-    const nonce = generateNonce(walletAddress);
+    const nonce = await generateNonce(walletAddress);
     
     console.log(`[wallet-auth] /api/auth/nonce generated nonce for wallet: ${walletAddress.substring(0, 8)}...`);
 
