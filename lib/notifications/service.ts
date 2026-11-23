@@ -137,6 +137,49 @@ export async function notifyOwnershipTransferred(
   });
 }
 
+export async function notifyJoinRequestReceived(
+  supabase: SupabaseClient,
+  ownerUserId: string,
+  groupId: string,
+  groupName: string,
+  requesterWallet: string,
+): Promise<CreateNotificationResult> {
+  return createNotification(supabase, {
+    userId: ownerUserId,
+    type: "group_join_requested",
+    title: "New join request",
+    body: `A wallet requested to join "${groupName}".`,
+    groupId,
+    metadata: {
+      groupName,
+      requesterWallet,
+    },
+  });
+}
+
+export async function notifyJoinRequestReviewed(
+  supabase: SupabaseClient,
+  requesterUserId: string,
+  groupId: string,
+  groupName: string,
+  status: "approved" | "rejected",
+): Promise<CreateNotificationResult> {
+  const approved = status === "approved";
+
+  return createNotification(supabase, {
+    userId: requesterUserId,
+    type: approved
+      ? "group_join_request_approved"
+      : "group_join_request_rejected",
+    title: approved ? "Join request approved" : "Join request rejected",
+    body: approved
+      ? `Your request to join "${groupName}" was approved.`
+      : `Your request to join "${groupName}" was rejected.`,
+    groupId,
+    metadata: { groupName, status },
+  });
+}
+
 export function parsePagination(
   searchParams: URLSearchParams,
 ): { limit: number; offset: number; unreadOnly: boolean } {
