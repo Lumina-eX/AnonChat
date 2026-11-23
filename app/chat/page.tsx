@@ -14,6 +14,7 @@ import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { ChatEmptyState } from "@/components/chat-empty-state";
 import { GroupAuditDialog } from "@/components/group-audit-dialog";
+import { InviteMembersDialog } from "@/components/invite-members-dialog";
 import {
   PresenceIndicator,
   type PresenceStatus,
@@ -1337,6 +1338,13 @@ function ChatPageInner() {
                           <Users className="h-3.5 w-3.5" aria-hidden="true" />
                           Members
                         </button>
+                        <InviteMembersDialog
+                          groupName={selectedChat.name}
+                          inviteCode={`ANON-${selectedChat.id
+                            .replace(/[^a-z0-9]/gi, "")
+                            .slice(-6)
+                            .toUpperCase()}`}
+                        />
                         <button
                           type="button"
                           onClick={() => setRoomMembersOpen(true)}
