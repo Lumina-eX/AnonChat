@@ -14,6 +14,7 @@ import { createClient } from "@/lib/supabase/server"
 import { type NextRequest, NextResponse } from "next/server"
 import { requireGroupRole } from "@/lib/middleware/group-roles"
 import { resolveWalletFromUser } from "@/lib/auth/wallet-authorization"
+import { applyActiveMessageFilters } from "@/lib/message-retention"
 import {
   activeMembersCutoffIso,
   aggregateMessagesPerDay,
@@ -105,12 +106,16 @@ export async function GET(
     }
 
     const groupCreatedAt: string | null = group.created_at ?? null
+    const activeAt = new Date().toISOString()
 
     // Total messages — count only, never select content columns.
-    const { count: totalMessages, error: totalError } = await supabase
-      .from("messages")
-      .select("id", { count: "exact", head: true })
-      .eq("room_id", groupId)
+    const { count: totalMessages, error: totalError } = await applyActiveMessageFilters(
+      supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("room_id", groupId),
+      activeAt,
+    )
 
     if (totalError) {
       console.error("[groups/statistics] totalMessages error:", totalError)
@@ -152,12 +157,15 @@ export async function GET(
 
     // Active members — distinct posters in the recent window (user_id only).
     const cutoff = activeMembersCutoffIso(activeDays)
-    const { data: activeRows, error: activeError } = await supabase
-      .from("messages")
-      .select("user_id")
-      .eq("room_id", groupId)
-      .gte("created_at", cutoff)
-      .not("user_id", "is", null)
+    const { data: activeRows, error: activeError } = await applyActiveMessageFilters(
+      supabase
+        .from("messages")
+        .select("user_id")
+        .eq("room_id", groupId)
+        .gte("created_at", cutoff)
+        .not("user_id", "is", null),
+      activeAt,
+    )
 
     if (activeError) {
       console.error("[groups/statistics] activeMembers error:", activeError)
@@ -186,12 +194,15 @@ export async function GET(
       rangeEndExclusive.setUTCDate(rangeEndExclusive.getUTCDate() + 1)
 
       // Select only created_at — never content / ciphertext fields.
-      const { data: dailyRows, error: dailyError } = await supabase
-        .from("messages")
-        .select("created_at")
-        .eq("room_id", groupId)
-        .gte("created_at", rangeStart)
-        .lt("created_at", rangeEndExclusive.toISOString())
+      const { data: dailyRows, error: dailyError } = await applyActiveMessageFilters(
+        supabase
+          .from("messages")
+          .select("created_at")
+          .eq("room_id", groupId)
+          .gte("created_at", rangeStart)
+          .lt("created_at", rangeEndExclusive.toISOString()),
+        activeAt,
+      )
 
       if (dailyError) {
         console.error("[groups/statistics] messagesPerDay error:", dailyError)
