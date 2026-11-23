@@ -29,7 +29,11 @@ export type AuditEventType =
   | "role_assigned"
   | "role_revoked"
   | "wallet_verified"
-  | "wallet_verification_failed";
+  | "wallet_verification_failed"
+  | "join_request_created"
+  | "join_request_approved"
+  | "join_request_rejected"
+  | "join_request_cancelled";
 
 export interface StellarTransaction {
   hash: string;
