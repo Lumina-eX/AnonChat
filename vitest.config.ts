@@ -24,6 +24,7 @@ export default defineConfig({
       "tests/wallet-balance.test.ts",
       "tests/group-message-statistics.test.ts",
       "tests/stellar-transaction-state-machine.test.ts",
+      "tests/escrow-funding.test.ts",
     ],
     globals: false,
   },
