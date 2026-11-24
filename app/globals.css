@@ -11,19 +11,20 @@
   --card-foreground: oklch(0.08 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.08 0 0);
-  --primary: oklch(0.6 0.25 280); /* Vibrant purple */
+  /* L=0.55 keeps white-on-primary and primary-on-background >= 4.5:1 (WCAG AA) */
+  --primary: var(--theme-primary-light, oklch(0.55 0.25 280)); /* Vibrant purple */
   --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.5 0.2 200); /* Deep cyan */
+  --secondary: var(--theme-secondary, oklch(0.5 0.2 200)); /* Deep cyan */
   --secondary-foreground: oklch(0.98 0 0);
   --muted: oklch(0.9 0 0);
   --muted-foreground: oklch(0.4 0 0);
-  --accent: oklch(0.7 0.22 300); /* Bright magenta */
+  --accent: var(--theme-accent, oklch(0.7 0.22 300)); /* Bright magenta */
   --accent-foreground: oklch(0.08 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.98 0 0);
   --border: oklch(0.85 0 0);
   --input: oklch(0.98 0 0);
-  --ring: oklch(0.6 0 0);
+  --ring: var(--primary);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -47,19 +48,22 @@
   --card-foreground: oklch(0.98 0 0);
   --popover: oklch(0.145 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.6 0.25 280);
-  --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.5 0.2 200);
+  /* Lighter purple + dark text so both primary surfaces and primary text
+     meet WCAG AA (>= 4.5:1) against the dark background. */
+  --primary: var(--theme-primary-dark, oklch(0.72 0.18 280));
+  --primary-foreground: oklch(0.08 0 0);
+  --secondary: var(--theme-secondary, oklch(0.5 0.2 200));
   --secondary-foreground: oklch(0.98 0 0);
   --muted: oklch(0.25 0 0);
   --muted-foreground: oklch(0.7 0 0);
-  --accent: oklch(0.7 0.22 300);
+  --accent: var(--theme-accent, oklch(0.7 0.22 300));
   --accent-foreground: oklch(0.08 0 0);
-  --destructive: oklch(0.396 0.141 25.723);
-  --destructive-foreground: oklch(0.637 0.237 25.331);
+  /* Previous values were ~2:1 against the background; these meet WCAG AA. */
+  --destructive: oklch(0.68 0.19 25);
+  --destructive-foreground: oklch(0.08 0 0);
   --border: oklch(0.2 0 0);
   --input: oklch(0.269 0 0);
-  --ring: oklch(0.439 0 0);
+  --ring: var(--primary);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
@@ -340,5 +344,67 @@
   .empty-state-accent-3,
   .empty-state-sparkle {
     animation: none;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Accessibility                                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Visible keyboard focus indicator for every focusable element.
+ * Deliberately unlayered so it wins over `outline-none` utilities, while
+ * :focus-visible keeps it from showing on mouse clicks.
+ */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Elements that are only programmatically focusable (tabIndex=-1 targets
+   such as headings we move focus to) still need an indicator when focused
+   via keyboard-driven navigation. */
+[tabindex="-1"]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Skip link: hidden until it receives keyboard focus. */
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: -100px;
+  z-index: 100;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+.skip-link:focus {
+  top: 1rem;
+}
+
+/* Respect users who ask for less motion everywhere, not just empty states. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Windows High Contrast / forced-colors: keep focus and selection visible. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid CanvasText;
+  }
+  [aria-current="true"],
+  [aria-current="page"] {
+    outline: 2px solid Highlight;
   }
 }
