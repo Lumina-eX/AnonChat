@@ -1593,8 +1593,11 @@ function ChatPageInner() {
                        )}
 
                      {!isLoadingMessagesByRoom[selectedChatId || ''] &&
-                        filteredMessages.map((message) => (
-                          <ContextMenu.Root key={message.id}>
+                       filteredMessages.length > 0 && (
+                       <ol aria-label="Messages" className="space-y-3">
+                        {filteredMessages.map((message) => (
+                          <li key={message.id} className="list-none">
+                          <ContextMenu.Root>
                             <ContextMenu.Trigger
                               asChild
                               disabled={message.status === "sending"}
@@ -1636,20 +1639,6 @@ function ChatPageInner() {
                               </ContextMenu.Content>
                             </ContextMenu.Portal>
                           </ContextMenu.Root>
-                       filteredMessages.length > 0 && (
-                       <ol aria-label="Messages" className="space-y-3">
-                        {filteredMessages.map((message) => (
-                          <li key={message.id} className="list-none">
-                          <ChatMessageBubble
-                            message={message} 
-                            searchQuery={messageSearchQuery}
-                            isPinned={pinnedIds.includes(message.id)}
-                            isAdmin={isAdmin}
-                            onTogglePin={(msgId) => togglePinMessage(selectedChat.id, msgId)}
-                            isHighlighted={highlightedMessageId === message.id}
-                            onReply={handleReplyToMessage}
-                            onJumpToMessage={handleScrollToMessage}
-                          />
                           </li>
                         ))}
                        </ol>
