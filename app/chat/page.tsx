@@ -20,6 +20,12 @@ import {
   type PresenceStatus,
 } from "@/components/presence-indicator";
 import { RoomMembersDialog } from "@/components/room-members-dialog";
+import {
+  ForwardMessageDialog,
+  type ForwardedMessage,
+} from "@/components/forward-message-dialog";
+import * as ContextMenu from "@radix-ui/react-context-menu";
+import toast from "react-hot-toast";
 import ConnectWallet from "@/components/wallet-connector";
 import { RoomActivityPanel } from "@/components/room-activity-panel";
 import MemberPanel from "@/components/MemberPanel";
@@ -39,6 +45,8 @@ import {
   AlertTriangle,
   ArrowLeft,
   Check,
+  Copy,
+  Forward,
   MessageSquare,
   Loader2,
   Menu,
@@ -99,6 +107,8 @@ interface DBMessage {
     display_name?: string;
     avatar_url?: string;
   };
+  is_forwarded?: boolean | null;
+  forwarded_original_created_at?: string | null;
 }
 
 /** Debounce before a composer edit is written to the draft store. */
@@ -130,6 +140,9 @@ function ChatPageInner() {
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const [roomMembersOpen, setRoomMembersOpen] = useState(false);
+  const [forwardMessageId, setForwardMessageId] = useState<string | null>(
+    null,
+  );
   const [memberPanelMobileOpen, setMemberPanelMobileOpen] = useState(false);
   const [auditTrailOpen, setAuditTrailOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -365,6 +378,8 @@ function ChatPageInner() {
         status: "read",
         replyTo,
         senderName: message.profiles?.display_name,
+        isForwarded: Boolean(message.is_forwarded),
+        forwardedOriginalAt: message.forwarded_original_created_at ?? null,
       };
     },
     [currentUser?.id],
@@ -884,6 +899,8 @@ function ChatPageInner() {
 
       // Esc -> Close active modals, dropdowns, reply mode, or sidebars
       if (event.key === "Escape") {
+        // The forward dialog (Radix) handles its own Escape.
+        if (forwardMessageId) return;
         if (replyingToMessage) {
           setReplyingToMessage(null);
         } else if (roomMembersOpen) {
@@ -896,7 +913,45 @@ function ChatPageInner() {
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [roomMembersOpen, mobileSidebarOpen, replyingToMessage]);
+  }, [forwardMessageId, roomMembersOpen, mobileSidebarOpen, replyingToMessage]);
+
+  const handleForwardMessage = useCallback((message: ChatMessage) => {
+    setForwardMessageId(message.id);
+  }, []);
+
+  const handleMessageForwarded = useCallback(
+    (destination: { id: string; name: string }, message: ForwardedMessage) => {
+      const forwarded = transformToChatMessage(message);
+      // Only append if the destination's history is already loaded; otherwise
+      // it is fetched (including this message) when that group is opened.
+      setMessagesByChat((prev) =>
+        prev[destination.id]
+          ? { ...prev, [destination.id]: [...prev[destination.id], forwarded] }
+          : prev,
+      );
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.id === destination.id
+            ? {
+                ...chat,
+                lastMessage: message.content,
+                lastSeen: forwarded.time,
+              }
+            : chat,
+        ),
+      );
+    },
+    [transformToChatMessage],
+  );
+
+  const handleCopyMessage = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Message copied");
+    } catch {
+      toast.error("Couldn't copy message");
+    }
+  }, []);
 
   const filteredChats = useMemo(() => {
     if (!query.trim()) return chats;
@@ -1542,16 +1597,48 @@ function ChatPageInner() {
                        <ol aria-label="Messages" className="space-y-3">
                         {filteredMessages.map((message) => (
                           <li key={message.id} className="list-none">
-                          <ChatMessageBubble
-                            message={message} 
-                            searchQuery={messageSearchQuery}
-                            isPinned={pinnedIds.includes(message.id)}
-                            isAdmin={isAdmin}
-                            onTogglePin={(msgId) => togglePinMessage(selectedChat.id, msgId)}
-                            isHighlighted={highlightedMessageId === message.id}
-                            onReply={handleReplyToMessage}
-                            onJumpToMessage={handleScrollToMessage}
-                          />
+                          <ContextMenu.Root>
+                            <ContextMenu.Trigger
+                              asChild
+                              disabled={message.status === "sending"}
+                            >
+                              <div>
+                                <ChatMessageBubble
+                                  message={message}
+                                  searchQuery={messageSearchQuery}
+                                  isPinned={pinnedIds.includes(message.id)}
+                                  isAdmin={isAdmin}
+                                  onTogglePin={(msgId) => togglePinMessage(selectedChat.id, msgId)}
+                                  isHighlighted={highlightedMessageId === message.id}
+                                  onReply={handleReplyToMessage}
+                                  onJumpToMessage={handleScrollToMessage}
+                                  onForward={handleForwardMessage}
+                                />
+                              </div>
+                            </ContextMenu.Trigger>
+                            <ContextMenu.Portal>
+                              <ContextMenu.Content className="z-50 min-w-40 rounded-xl border border-border/70 bg-card p-1 text-sm shadow-lg">
+                                <ContextMenu.Item
+                                  onSelect={() => handleReplyToMessage(message)}
+                                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
+                                >
+                                  <Reply className="h-4 w-4" /> Reply
+                                </ContextMenu.Item>
+                                <ContextMenu.Item
+                                  onSelect={() => handleForwardMessage(message)}
+                                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
+                                >
+                                  <Forward className="h-4 w-4" /> Forward
+                                </ContextMenu.Item>
+                                <ContextMenu.Item
+                                  onSelect={() => void handleCopyMessage(message.text)}
+                                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
+                                >
+                                  <Copy className="h-4 w-4" /> Copy text
+                                </ContextMenu.Item>
+                              </ContextMenu.Content>
+                            </ContextMenu.Portal>
+                          </ContextMenu.Root>
                           </li>
                         ))}
                        </ol>
@@ -1702,6 +1789,13 @@ function ChatPageInner() {
                     roomId={selectedChat.id}
                     open={roomMembersOpen}
                     onOpenChange={setRoomMembersOpen}
+                  />
+                  <ForwardMessageDialog
+                    messageId={forwardMessageId}
+                    onOpenChange={(open) => {
+                      if (!open) setForwardMessageId(null);
+                    }}
+                    onForwarded={handleMessageForwarded}
                   />
                   <GroupAuditDialog
                     groupId={selectedChat.id}
