@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
     if (original_filename.length > 255) {
       return NextResponse.json({ error: "Filename is too long" }, { status: 400 })
     }
-    if (/[\/"<>|]/.test(original_filename)) {
+    if (/[/"<>|]/.test(original_filename)) {
       return NextResponse.json({ error: "Filename contains invalid characters" }, { status: 400 })
     }
 
