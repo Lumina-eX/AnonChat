@@ -14,11 +14,18 @@ import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { ChatEmptyState } from "@/components/chat-empty-state";
 import { GroupAuditDialog } from "@/components/group-audit-dialog";
+import { InviteMembersDialog } from "@/components/invite-members-dialog";
 import {
   PresenceIndicator,
   type PresenceStatus,
 } from "@/components/presence-indicator";
 import { RoomMembersDialog } from "@/components/room-members-dialog";
+import {
+  ForwardMessageDialog,
+  type ForwardedMessage,
+} from "@/components/forward-message-dialog";
+import * as ContextMenu from "@radix-ui/react-context-menu";
+import toast from "react-hot-toast";
 import ConnectWallet from "@/components/wallet-connector";
 import { RoomActivityPanel } from "@/components/room-activity-panel";
 import MemberPanel from "@/components/MemberPanel";
@@ -38,6 +45,8 @@ import {
   AlertTriangle,
   ArrowLeft,
   Check,
+  Copy,
+  Forward,
   MessageSquare,
   Loader2,
   Menu,
@@ -56,6 +65,7 @@ import {
   Reply,
 } from "lucide-react";
 import { StellarNetworkStatus } from "@/components/stellar-network-status";
+import { handleRovingKeyDown, useFocusTrap, useMediaQuery } from "@/lib/a11y";
 import { WalletNetworkWarning } from "@/components/wallet-network-warning";
 
 type ChatPreview = {
@@ -97,10 +107,17 @@ interface DBMessage {
     display_name?: string;
     avatar_url?: string;
   };
+  is_forwarded?: boolean | null;
+  forwarded_original_created_at?: string | null;
 }
 
 /** Debounce before a composer edit is written to the draft store. */
 const DRAFT_SAVE_DEBOUNCE_MS = 400;
+
+/** Mirrors the server-side default in lib/middleware/message-validation.ts. */
+const MAX_MESSAGE_LENGTH = 2000;
+/** Show the character counter once the user gets close to the limit. */
+const MESSAGE_LENGTH_WARNING_THRESHOLD = MAX_MESSAGE_LENGTH - 200;
 
 /**
  * Inner page component — must be wrapped in <Suspense> because it calls
@@ -123,6 +140,9 @@ function ChatPageInner() {
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const [roomMembersOpen, setRoomMembersOpen] = useState(false);
+  const [forwardMessageId, setForwardMessageId] = useState<string | null>(
+    null,
+  );
   const [memberPanelMobileOpen, setMemberPanelMobileOpen] = useState(false);
   const [auditTrailOpen, setAuditTrailOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -163,6 +183,34 @@ function ChatPageInner() {
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Accessibility state ---------------------------------------------
+  const sidebarRef = useRef<HTMLElement>(null);
+  const conversationListRef = useRef<HTMLUListElement>(null);
+  const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const messageSearchButtonRef = useRef<HTMLButtonElement>(null);
+  const conversationHeadingRef = useRef<HTMLHeadingElement>(null);
+  const isDesktop = useMediaQuery("(min-width: 768px)");
+  const [sendError, setSendError] = useState<string | null>(null);
+  // Text pushed to the visually-hidden live region for screen readers.
+  const [announcement, setAnnouncement] = useState("");
+  const announceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Announce a message to assistive technologies. The region is cleared
+   * first so repeating the same text (e.g. "Message sent") is re-announced.
+   */
+  const announce = useCallback((text: string) => {
+    setAnnouncement("");
+    if (announceTimerRef.current) clearTimeout(announceTimerRef.current);
+    announceTimerRef.current = setTimeout(() => setAnnouncement(text), 100);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (announceTimerRef.current) clearTimeout(announceTimerRef.current);
+    };
+  }, []);
 
   // Load pinned message IDs from localStorage per room
   useEffect(() => {
@@ -215,6 +263,7 @@ function ChatPageInner() {
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
       const value = event.target.value;
       setInputMessage(value);
+      setSendError(null);
 
       if (!selectedChatId) return;
 
@@ -329,6 +378,8 @@ function ChatPageInner() {
         status: "read",
         replyTo,
         senderName: message.profiles?.display_name,
+        isForwarded: Boolean(message.is_forwarded),
+        forwardedOriginalAt: message.forwarded_original_created_at ?? null,
       };
     },
     [currentUser?.id],
@@ -655,15 +706,22 @@ function ChatPageInner() {
     setSelectedChatId(chatId);
     setDeepLinkError(null);
     setReplyingToMessage(null);
+    setSendError(null);
     setMobileSidebarOpen(false);
     setActiveMobileTab("conversation");
+
+    // On small screens the group list is hidden once a group is chosen, so
+    // move focus to the conversation heading instead of losing it.
+    if (!isDesktop) {
+      requestAnimationFrame(() => conversationHeadingRef.current?.focus());
+    }
 
     // Reflect the selected group in the URL without a full page reload so
     // users can share/bookmark the link and browser back/forward works.
     const params = new URLSearchParams(searchParams.toString());
     params.set("group", chatId);
     router.push(`/chat?${params.toString()}`, { scroll: false });
-  }, [router, searchParams]);
+  }, [router, searchParams, isDesktop]);
 
   const handleReplyToMessage = useCallback((message: ChatMessage) => {
     setReplyingToMessage(message);
@@ -672,19 +730,41 @@ function ChatPageInner() {
 
   const handleCancelReply = useCallback(() => {
     setReplyingToMessage(null);
+    composerInputRef.current?.focus();
   }, []);
 
   const isMobileSidebarVisible =
     mobileSidebarOpen || activeMobileTab === "chats";
 
+  // The mobile slide-over sidebar is modal: trap focus inside it, close it
+  // on Escape and return focus to the menu button that opened it.
+  const closeMobileSidebar = useCallback(() => setMobileSidebarOpen(false), []);
+  useFocusTrap(sidebarRef, mobileSidebarOpen && !isDesktop, {
+    onEscape: closeMobileSidebar,
+    returnFocusRef: mobileMenuButtonRef,
+  });
+
+  const isMessageTooLong = inputMessage.length > MAX_MESSAGE_LENGTH;
+
   const handleSendMessage = useCallback(async () => {
     const trimmedMessage = inputMessage.trim();
     if (!trimmedMessage || !selectedChatId) return;
 
-    if (!window.navigator.onLine) {
-      handleAppError(new Error("network"), "NETWORK");
+    if (trimmedMessage.length > MAX_MESSAGE_LENGTH) {
+      setSendError(
+        `Message is too long. Messages can be at most ${MAX_MESSAGE_LENGTH} characters.`,
+      );
+      composerInputRef.current?.focus();
       return;
     }
+
+    if (!window.navigator.onLine) {
+      handleAppError(new Error("network"), "NETWORK");
+      setSendError("You appear to be offline. Your message was not sent.");
+      return;
+    }
+
+    setSendError(null);
 
     const currentReply = replyingToMessage;
     const currentChat = chats.find((chat) => chat.id === selectedChatId);
@@ -752,6 +832,7 @@ function ChatPageInner() {
           msg.id === tempId ? savedMessage : msg,
         ),
       }));
+      announce("Message sent");
 
       setChats((prev) =>
         prev.map((chat) =>
@@ -767,6 +848,9 @@ function ChatPageInner() {
       );
     } catch (error: any) {
       handleAppError(error, "SEND_MESSAGE");
+      setSendError(
+        "Message could not be sent. Your text has been kept so you can try again.",
+      );
 
       // Sending failed: restore the text and its draft so nothing is lost.
       setInputMessage(trimmedMessage);
@@ -781,7 +865,7 @@ function ChatPageInner() {
     } finally {
       setIsSending(false);
     }
-  }, [inputMessage, selectedChatId, replyingToMessage, transformToChatMessage, chats, cancelPendingDraftSave]);
+  }, [inputMessage, selectedChatId, replyingToMessage, transformToChatMessage, chats, cancelPendingDraftSave, announce]);
 
   const handleComposerKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -815,6 +899,8 @@ function ChatPageInner() {
 
       // Esc -> Close active modals, dropdowns, reply mode, or sidebars
       if (event.key === "Escape") {
+        // The forward dialog (Radix) handles its own Escape.
+        if (forwardMessageId) return;
         if (replyingToMessage) {
           setReplyingToMessage(null);
         } else if (roomMembersOpen) {
@@ -827,7 +913,45 @@ function ChatPageInner() {
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [roomMembersOpen, mobileSidebarOpen, replyingToMessage]);
+  }, [forwardMessageId, roomMembersOpen, mobileSidebarOpen, replyingToMessage]);
+
+  const handleForwardMessage = useCallback((message: ChatMessage) => {
+    setForwardMessageId(message.id);
+  }, []);
+
+  const handleMessageForwarded = useCallback(
+    (destination: { id: string; name: string }, message: ForwardedMessage) => {
+      const forwarded = transformToChatMessage(message);
+      // Only append if the destination's history is already loaded; otherwise
+      // it is fetched (including this message) when that group is opened.
+      setMessagesByChat((prev) =>
+        prev[destination.id]
+          ? { ...prev, [destination.id]: [...prev[destination.id], forwarded] }
+          : prev,
+      );
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.id === destination.id
+            ? {
+                ...chat,
+                lastMessage: message.content,
+                lastSeen: forwarded.time,
+              }
+            : chat,
+        ),
+      );
+    },
+    [transformToChatMessage],
+  );
+
+  const handleCopyMessage = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Message copied");
+    } catch {
+      toast.error("Couldn't copy message");
+    }
+  }, []);
 
   const filteredChats = useMemo(() => {
     if (!query.trim()) return chats;
@@ -858,7 +982,46 @@ function ChatPageInner() {
   const handleCloseSearch = useCallback(() => {
     setMessageSearchOpen(false);
     setMessageSearchQuery("");
+    // Return focus to the control that opened the search bar.
+    requestAnimationFrame(() => messageSearchButtonRef.current?.focus());
   }, []);
+
+  // --- Screen-reader announcements for new messages ---------------------
+  // Only messages appended to the end of the currently open conversation are
+  // announced; initial loads, room switches and "load older" are not, so the
+  // user is not flooded with the whole history.
+  const lastAnnouncedRef = useRef<{ chatId: string | null; lastId: string | null }>({
+    chatId: null,
+    lastId: null,
+  });
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    const previous = lastAnnouncedRef.current;
+    lastAnnouncedRef.current = { chatId: selectedChatId, lastId: last?.id ?? null };
+
+    if (!last || previous.chatId !== selectedChatId || previous.lastId === null) return;
+    if (previous.lastId === last.id) return;
+    if (last.author === "them") {
+      announce(`New message from ${last.senderName || "a group member"}: ${last.text}`);
+    }
+  }, [messages, selectedChatId, announce]);
+
+  // Announce when a conversation finishes loading.
+  const wasLoadingMessagesRef = useRef(false);
+  const isLoadingSelectedMessages = selectedChatId
+    ? Boolean(isLoadingMessagesByRoom[selectedChatId])
+    : false;
+  useEffect(() => {
+    if (wasLoadingMessagesRef.current && !isLoadingSelectedMessages && selectedChat) {
+      const count = messagesByChat[selectedChat.id]?.length ?? 0;
+      announce(
+        count === 0
+          ? `${selectedChat.name} opened. No messages yet.`
+          : `${selectedChat.name} opened. ${count} ${count === 1 ? "message" : "messages"} loaded.`,
+      );
+    }
+    wasLoadingMessagesRef.current = isLoadingSelectedMessages;
+  }, [isLoadingSelectedMessages, selectedChat, messagesByChat, announce]);
 
   // Reset search when switching rooms
   useEffect(() => {
@@ -866,8 +1029,32 @@ function ChatPageInner() {
     setMessageSearchOpen(false);
   }, [selectedChatId]);
 
+  const composerDescribedBy = [
+    "composer-hint",
+    replyingToMessage ? "composer-reply-context" : null,
+    inputMessage.length > MESSAGE_LENGTH_WARNING_THRESHOLD ? "composer-char-count" : null,
+    sendError || isMessageTooLong ? "composer-error" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      {/* Skip links let keyboard users bypass the site header. */}
+      {selectedChat && (
+        <a href="#message-composer" className="skip-link">
+          Skip to message composer
+        </a>
+      )}
+      <a href="#chat-group-search" className="skip-link">
+        Skip to groups
+      </a>
+
+      {/* Polite live region for new messages and status updates. */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {announcement}
+      </div>
+
       <Header />
 
       <StellarNetworkStatus variant="banner" />
@@ -879,7 +1066,7 @@ function ChatPageInner() {
           role="alert"
           className="flex items-center gap-3 px-4 py-2.5 bg-destructive/10 border-b border-destructive/20 text-sm text-destructive"
         >
-          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span className="flex-1">
             {deepLinkError === "unauthorized"
               ? "You don't have access to the requested group. Showing your first available group instead."
@@ -889,17 +1076,24 @@ function ChatPageInner() {
             type="button"
             onClick={() => setDeepLinkError(null)}
             className="shrink-0 p-1 rounded hover:bg-destructive/20 transition-colors"
-            aria-label="Dismiss"
+            aria-label="Dismiss notice"
           >
-            <X className="h-3.5 w-3.5" />
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         </div>
       )}
 
-      <main className="flex-1 pt-24 pb-24 md:pb-8 px-3 sm:px-6">
+      <main id="main-content" className="flex-1 pt-24 pb-24 md:pb-8 px-3 sm:px-6">
         <div className="mx-auto w-full max-w-7xl h-[min(84vh,820px)] rounded-3xl border border-border/70 bg-card/90 shadow-[0_24px_64px_-24px_rgba(0,0,0,0.35)] backdrop-blur-sm overflow-hidden">
           <div className="h-full flex relative">
             <aside
+              id="chat-sidebar"
+              ref={sidebarRef}
+              aria-label="Groups"
+              role={mobileSidebarOpen && !isDesktop ? "dialog" : undefined}
+              aria-modal={mobileSidebarOpen && !isDesktop ? true : undefined}
+              // Off-screen on mobile: remove from tab order / a11y tree.
+              inert={!isDesktop && !isMobileSidebarVisible}
               className={cn(
                 "absolute inset-y-0 left-0 z-20 w-full border-r border-border/70 bg-card md:static md:w-[340px] md:max-w-none",
                 "transition-transform duration-300 ease-out md:translate-x-0",
@@ -909,29 +1103,54 @@ function ChatPageInner() {
               <div className="h-full flex flex-col">
                 <div className="p-4 border-b border-border/70 space-y-3">
                   <div className="flex items-center justify-between gap-2">
-                    <h2 className="text-base font-semibold">Groups</h2>
+                    <h2 id="chat-groups-heading" className="text-base font-semibold">Groups</h2>
                     <div className="shrink-0">
                       <ConnectWallet />
                     </div>
                   </div>
 
-                  <div className="relative">
-                    <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <div className="relative" role="search">
+                    <label htmlFor="chat-group-search" className="sr-only">
+                      Search groups
+                    </label>
+                    <Search
+                      aria-hidden="true"
+                      className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    />
                     <input
+                      id="chat-group-search"
                       ref={searchInputRef}
+                      type="search"
                       value={query}
                       onChange={(event) => setQuery(event.target.value)}
                       placeholder="Search groups or messages (Ctrl+K)"
                       title="Search (Ctrl+K)"
-                      className="w-full rounded-xl border border-border/80 bg-background/70 pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                      aria-keyshortcuts="Control+K Meta+K"
+                      aria-controls="chat-conversation-list"
+                      className="w-full rounded-xl border border-muted-foreground/50 bg-background/70 pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
                     />
+                    {query.trim() && (
+                      <p role="status" className="sr-only">
+                        {filteredChats.length === 0
+                          ? "No groups found"
+                          : `${filteredChats.length} ${filteredChats.length === 1 ? "group" : "groups"} found`}
+                      </p>
+                    )}
                   </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-2">
+                <nav
+                  aria-labelledby="chat-groups-heading"
+                  className="flex-1 overflow-y-auto p-2"
+                  aria-busy={isLoadingRooms}
+                >
                   {isLoadingRooms && (
-                    <div className="flex items-center justify-center h-full text-muted-foreground">
-                      <Loader2 className="h-5 w-5 animate-spin" />
+                    <div
+                      role="status"
+                      className="flex items-center justify-center h-full text-muted-foreground"
+                    >
+                      <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+                      <span className="sr-only">Loading groups…</span>
                     </div>
                   )}
 
@@ -941,13 +1160,27 @@ function ChatPageInner() {
                     </div>
                   )}
 
-                  {!isLoadingRooms &&
-                    filteredChats.map((chat) => {
+                  {!isLoadingRooms && filteredChats.length > 0 && (
+                    <ul
+                      id="chat-conversation-list"
+                      ref={conversationListRef}
+                      aria-label="Your groups. Use the up and down arrow keys to move between groups."
+                      onKeyDown={(event) =>
+                        handleRovingKeyDown(
+                          event,
+                          conversationListRef.current,
+                          '[data-conversation-item="true"]',
+                        )
+                      }
+                    >
+                  {filteredChats.map((chat) => {
                       const isActive = chat.id === selectedChatId;
                       return (
+                        <li key={chat.id}>
                         <button
-                          key={chat.id}
                           type="button"
+                          data-conversation-item="true"
+                          aria-current={isActive ? "true" : undefined}
                           onClick={() => handleSelectChat(chat.id)}
                           className={cn(
                             "w-full text-left p-3 rounded-xl transition-all duration-150 mb-1",
@@ -959,6 +1192,7 @@ function ChatPageInner() {
                         >
                           <div className="flex items-start gap-2.5">
                             <div
+                              aria-hidden="true"
                               className={cn(
                                 "shrink-0 h-9 w-9 rounded-full flex items-center justify-center text-sm font-semibold uppercase select-none",
                                 isActive
@@ -990,11 +1224,17 @@ function ChatPageInner() {
                                 </div>
                                 <div className="shrink-0 flex flex-col items-end gap-1">
                                   <p className="text-[11px] text-muted-foreground whitespace-nowrap">
+                                    {chat.lastSeen && (
+                                      <span className="sr-only">Last message at </span>
+                                    )}
                                     {chat.lastSeen}
                                   </p>
                                   {chat.unreadCount > 0 && (
                                     <span className="inline-flex items-center justify-center min-w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold px-1.5">
                                       {chat.unreadCount}
+                                      <span className="sr-only">
+                                        {chat.unreadCount === 1 ? " unread message" : " unread messages"}
+                                      </span>
                                     </span>
                                   )}
                                 </div>
@@ -1005,21 +1245,27 @@ function ChatPageInner() {
                             </div>
                           </div>
                         </button>
+                        </li>
                       );
                     })}
-                </div>
+                    </ul>
+                  )}
+                </nav>
               </div>
             </aside>
 
             {mobileSidebarOpen && (
-              <button
-                type="button"
+              // Pointer-only backdrop; keyboard users close with Escape.
+              <div
+                aria-hidden="true"
                 className="md:hidden absolute inset-0 z-10 bg-black/30"
                 onClick={() => setMobileSidebarOpen(false)}
               />
             )}
 
             <section
+              aria-labelledby={selectedChat ? "conversation-heading" : undefined}
+              aria-label={selectedChat ? undefined : "Conversation"}
               className={cn(
                 "flex-1 flex flex-col bg-background/30 transition-opacity duration-300",
                 activeMobileTab === "chats" && "hidden md:flex",
@@ -1038,11 +1284,15 @@ function ChatPageInner() {
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2 min-w-0">
                         <button
+                          ref={mobileMenuButtonRef}
                           type="button"
                           className="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-lg border border-border/80"
                           onClick={() => setMobileSidebarOpen(true)}
+                          aria-label="Open groups list"
+                          aria-expanded={mobileSidebarOpen}
+                          aria-controls="chat-sidebar"
                         >
-                          <Menu className="h-4 w-4" />
+                          <Menu className="h-4 w-4" aria-hidden="true" />
                         </button>
 
                         <button
@@ -1057,16 +1307,25 @@ function ChatPageInner() {
                             params.delete("group");
                             const qs = params.toString();
                             router.push(qs ? `/chat?${qs}` : "/chat", { scroll: false });
+                            // Keep keyboard focus on a sensible element after
+                            // the conversation (and this button) disappears.
+                            requestAnimationFrame(() => searchInputRef.current?.focus());
                           }}
+                          aria-label="Close conversation"
                         >
-                          <ArrowLeft className="h-4 w-4" />
+                          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
                         </button>
 
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 min-w-0">
-                            <p className="font-semibold truncate">
+                            <h2
+                              id="conversation-heading"
+                              ref={conversationHeadingRef}
+                              tabIndex={-1}
+                              className="font-semibold truncate text-base rounded"
+                            >
                               {selectedChat.name}
-                            </p>
+                            </h2>
                             <GroupVerificationBadge groupId={selectedChat.id} />
                           </div>
                           <p className="text-xs text-muted-foreground truncate">
@@ -1093,30 +1352,59 @@ function ChatPageInner() {
                               ? "Admin mode active (pin/unpin enabled)"
                               : "Enable admin mode to pin messages"
                           }
+                          aria-label={
+                            isAdmin
+                              ? "Admin mode on. Turn off to stop pinning messages"
+                              : "Member mode. Turn on admin mode to pin messages"
+                          }
                         >
-                          <ShieldCheck className="h-3.5 w-3.5" />
+                          <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
                           {isAdmin ? "Admin" : "Member"}
                         </button>
 
                         <button
+                          ref={messageSearchButtonRef}
+                          type="button"
+                          onClick={() =>
+                            messageSearchOpen ? handleCloseSearch() : setMessageSearchOpen(true)
+                          }
+                          aria-label="Search messages"
+                          aria-expanded={messageSearchOpen}
+                          aria-controls="message-search-input"
+                          className="inline-flex items-center justify-center h-8 w-8 rounded-lg border border-border/80 text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                        >
+                          <Search className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                        <button
                           type="button"
                           onClick={() => setAuditTrailOpen(true)}
+                          aria-haspopup="dialog"
                           className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40"
                         >
-                          <ScrollText className="h-3.5 w-3.5" />
+                          <ScrollText className="h-3.5 w-3.5" aria-hidden="true" />
                           Audit
                         </button>
                         <button
                           type="button"
                           onClick={() => setMemberPanelMobileOpen(true)}
+                          aria-expanded={memberPanelMobileOpen}
                           className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40"
                         >
-                          <Users className="h-3.5 w-3.5" />
+                          <Users className="h-3.5 w-3.5" aria-hidden="true" />
                           Members
                         </button>
+                        <InviteMembersDialog
+                          groupName={selectedChat.name}
+                          inviteCode={`ANON-${selectedChat.id
+                            .replace(/[^a-z0-9]/gi, "")
+                            .slice(-6)
+                            .toUpperCase()}`}
+                        />
                         <button
                           type="button"
                           onClick={() => setRoomMembersOpen(true)}
+                          aria-haspopup="dialog"
+                          aria-label="Manage members"
                           className="hidden lg:inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40"
                         >
                           Manage
@@ -1127,34 +1415,38 @@ function ChatPageInner() {
 
                   {/* Pinned Messages Banner */}
                   {selectedChat && pinnedIds.length > 0 && (
-                    <div className="px-4 py-2 bg-card/90 border-b border-border/70 flex items-center justify-between gap-3 text-xs shadow-sm backdrop-blur-sm">
-                      <div
+                    <section
+                      aria-label="Pinned messages"
+                      className="px-4 py-2 bg-card/90 border-b border-border/70 flex items-center justify-between gap-3 text-xs shadow-sm backdrop-blur-sm"
+                    >
+                      <button
+                        type="button"
                         onClick={() =>
                           activePinnedMessage &&
                           handleScrollToMessage(activePinnedMessage.id)
                         }
-                        className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer hover:opacity-85 transition"
-                        title="Click to jump to original message"
+                        disabled={!activePinnedMessage}
+                        className="flex items-center gap-2.5 min-w-0 flex-1 text-left rounded-md cursor-pointer hover:opacity-85 transition"
+                        title="Jump to original message"
                       >
-                        <div className="p-1.5 rounded-full bg-primary/15 text-primary shrink-0">
+                        <span className="p-1.5 rounded-full bg-primary/15 text-primary shrink-0" aria-hidden="true">
                           <Pin className="h-3.5 w-3.5 rotate-45" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-primary text-[11px] uppercase tracking-wide">
-                              Pinned Message{" "}
-                              {pinnedMessages.length > 1
-                                ? `(${activePinnedIndex + 1}/${pinnedMessages.length})`
-                                : ""}
-                            </span>
-                          </div>
-                          <p className="text-foreground/90 truncate font-medium text-xs mt-0.5">
+                        </span>
+                        <span className="min-w-0 flex-1 block">
+                          <span className="block font-semibold text-primary text-[11px] uppercase tracking-wide">
+                            Pinned Message{" "}
+                            {pinnedMessages.length > 1
+                              ? `(${activePinnedIndex + 1}/${pinnedMessages.length})`
+                              : ""}
+                          </span>
+                          <span className="block text-foreground/90 truncate font-medium text-xs mt-0.5">
                             {activePinnedMessage
                               ? activePinnedMessage.text
                               : "Pinned message"}
-                          </p>
-                        </div>
-                      </div>
+                          </span>
+                          <span className="sr-only">. Jump to message</span>
+                        </span>
+                      </button>
 
                       <div className="flex items-center gap-1 shrink-0">
                         {pinnedMessages.length > 1 && (
@@ -1167,7 +1459,7 @@ function ChatPageInner() {
                               className="p-1 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition"
                               aria-label="Previous pinned message"
                             >
-                              <ChevronLeft className="h-3.5 w-3.5" />
+                              <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
                             </button>
                             <button
                               type="button"
@@ -1177,7 +1469,7 @@ function ChatPageInner() {
                               className="p-1 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition"
                               aria-label="Next pinned message"
                             >
-                              <ChevronRight className="h-3.5 w-3.5" />
+                              <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
                             </button>
                           </div>
                         )}
@@ -1192,11 +1484,11 @@ function ChatPageInner() {
                             title="Unpin message"
                             aria-label="Unpin message"
                           >
-                            <X className="h-3.5 w-3.5" />
+                            <X className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
                       </div>
-                    </div>
+                    </section>
                   )}
 
                   {/* Collapsible message search bar */}
@@ -1215,6 +1507,28 @@ function ChatPageInner() {
                    <div
                      ref={scrollContainerRef}
                      data-message-container="true"
+                     role="region"
+                     aria-label={`Messages in ${selectedChat.name}. Use the up and down arrow keys to move between messages.`}
+                     aria-busy={isLoadingSelectedMessages}
+                     // Focusable so keyboard users can scroll it and enter
+                     // message navigation with the arrow keys.
+                     tabIndex={0}
+                     onKeyDown={(event) => {
+                       const target = event.target as HTMLElement;
+                       // Only handle arrows on the container or a message
+                       // itself, not inside its action buttons.
+                       if (
+                         target !== event.currentTarget &&
+                         !target.matches('[data-message-item="true"]')
+                       ) {
+                         return;
+                       }
+                       handleRovingKeyDown(
+                         event,
+                         event.currentTarget,
+                         '[data-message-item="true"]',
+                       );
+                     }}
                      className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 bg-gradient-to-b from-background/40 to-background"
                      onScroll={(e) => {
                        const container = e.currentTarget;
@@ -1226,10 +1540,27 @@ function ChatPageInner() {
                    >
                      {/* Loading indicator for pagination */}
                      {isLoadingMoreMessages[selectedChatId || ''] && (
-                       <div className="flex justify-center py-2">
-                         <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                       <div role="status" className="flex justify-center py-2">
+                         <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden="true" />
+                         <span className="sr-only">Loading older messages…</span>
                        </div>
                      )}
+
+                     {/* Keyboard / screen-reader alternative to scroll-to-load */}
+                     {!messageSearchQuery.trim() &&
+                       hasMoreMessages[selectedChatId || ''] &&
+                       !isLoadingMoreMessages[selectedChatId || ''] &&
+                       messages.length > 0 && (
+                         <div className="flex justify-center">
+                           <button
+                             type="button"
+                             onClick={() => selectedChatId && void loadMoreMessages(selectedChatId)}
+                             className="rounded-full border border-border/80 px-3 py-1 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                           >
+                             Load older messages
+                           </button>
+                         </div>
+                       )}
 
                      {/* Beginning of conversation indicator — only when not searching */}
                      {!messageSearchQuery.trim() && !hasMoreMessages[selectedChatId || ''] && messages.length > 0 && (
@@ -1239,8 +1570,9 @@ function ChatPageInner() {
                      )}
 
                      {isLoadingMessagesByRoom[selectedChatId || ''] && (
-                       <div className="h-full flex items-center justify-center text-muted-foreground">
-                         <Loader2 className="h-5 w-5 animate-spin" />
+                       <div role="status" className="h-full flex items-center justify-center text-muted-foreground">
+                         <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+                         <span className="sr-only">Loading messages…</span>
                        </div>
                      )}
 
@@ -1255,35 +1587,79 @@ function ChatPageInner() {
                        messageSearchQuery.trim() &&
                        filteredMessages.length === 0 && (
                          <div className="h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                           <Search className="h-8 w-8 opacity-30" />
+                           <Search className="h-8 w-8 opacity-30" aria-hidden="true" />
                            <p className="text-sm">No messages match &ldquo;{messageSearchQuery}&rdquo;</p>
                          </div>
                        )}
 
                      {!isLoadingMessagesByRoom[selectedChatId || ''] &&
-                        filteredMessages.map((message) => (
-                          <ChatMessageBubble 
-                            key={message.id} 
-                            message={message} 
-                            searchQuery={messageSearchQuery}
-                            isPinned={pinnedIds.includes(message.id)}
-                            isAdmin={isAdmin}
-                            onTogglePin={(msgId) => togglePinMessage(selectedChat.id, msgId)}
-                            isHighlighted={highlightedMessageId === message.id}
-                            onReply={handleReplyToMessage}
-                            onJumpToMessage={handleScrollToMessage}
-                          />
+                       filteredMessages.length > 0 && (
+                       <ol aria-label="Messages" className="space-y-3">
+                        {filteredMessages.map((message) => (
+                          <li key={message.id} className="list-none">
+                          <ContextMenu.Root>
+                            <ContextMenu.Trigger
+                              asChild
+                              disabled={message.status === "sending"}
+                            >
+                              <div>
+                                <ChatMessageBubble
+                                  message={message}
+                                  searchQuery={messageSearchQuery}
+                                  isPinned={pinnedIds.includes(message.id)}
+                                  isAdmin={isAdmin}
+                                  onTogglePin={(msgId) => togglePinMessage(selectedChat.id, msgId)}
+                                  isHighlighted={highlightedMessageId === message.id}
+                                  onReply={handleReplyToMessage}
+                                  onJumpToMessage={handleScrollToMessage}
+                                  onForward={handleForwardMessage}
+                                />
+                              </div>
+                            </ContextMenu.Trigger>
+                            <ContextMenu.Portal>
+                              <ContextMenu.Content className="z-50 min-w-40 rounded-xl border border-border/70 bg-card p-1 text-sm shadow-lg">
+                                <ContextMenu.Item
+                                  onSelect={() => handleReplyToMessage(message)}
+                                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
+                                >
+                                  <Reply className="h-4 w-4" /> Reply
+                                </ContextMenu.Item>
+                                <ContextMenu.Item
+                                  onSelect={() => handleForwardMessage(message)}
+                                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
+                                >
+                                  <Forward className="h-4 w-4" /> Forward
+                                </ContextMenu.Item>
+                                <ContextMenu.Item
+                                  onSelect={() => void handleCopyMessage(message.text)}
+                                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted/60"
+                                >
+                                  <Copy className="h-4 w-4" /> Copy text
+                                </ContextMenu.Item>
+                              </ContextMenu.Content>
+                            </ContextMenu.Portal>
+                          </ContextMenu.Root>
+                          </li>
                         ))}
+                       </ol>
+                     )}
                    </div>
 
-                  <div className="border-t border-border/70 bg-card/80 backdrop-blur-sm">
+                  <form
+                    aria-label="Send a message"
+                    className="border-t border-border/70 bg-card/80 backdrop-blur-sm"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void handleSendMessage();
+                    }}
+                  >
                     {replyingToMessage && (
                       <div className="px-4 py-2 bg-muted/60 border-b border-border/60 flex items-center justify-between gap-3 text-xs animate-in fade-in slide-in-from-bottom-2 duration-200">
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <div className="p-1 rounded-md bg-primary/10 text-primary shrink-0">
+                          <div className="p-1 rounded-md bg-primary/10 text-primary shrink-0" aria-hidden="true">
                             <Reply className="h-3.5 w-3.5" />
                           </div>
-                          <div className="min-w-0 flex-1">
+                          <div id="composer-reply-context" className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">
                               <span className="font-semibold text-primary text-[11px]">
                                 Replying to {replyingToMessage.author === "me" ? "yourself" : (replyingToMessage.senderName || selectedChat.name || "message")}
@@ -1301,7 +1677,7 @@ function ChatPageInner() {
                           title="Cancel reply (Esc)"
                           aria-label="Cancel reply"
                         >
-                          <X className="h-4 w-4" />
+                          <X className="h-4 w-4" aria-hidden="true" />
                         </button>
                       </div>
                     )}
@@ -1309,57 +1685,117 @@ function ChatPageInner() {
                     {isDraftSaved && (
                       <div
                         className="px-4 pt-2 flex items-center justify-end gap-1 text-[11px] text-muted-foreground animate-in fade-in"
-                        aria-live="polite"
                       >
-                        <Check className="h-3 w-3 text-emerald-500" />
+                        <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
                         Draft saved
                       </div>
                     )}
 
                     <div className="p-3 sm:p-4 flex items-end gap-2 sm:gap-3">
+                      {/* Not implemented yet: exposed as disabled rather than
+                          as silent no-op buttons. */}
                       <button
                         type="button"
-                        className="h-10 w-10 shrink-0 rounded-full border border-border/80 flex items-center justify-center text-muted-foreground hover:bg-muted/40"
+                        aria-label="Insert emoji (coming soon)"
+                        title="Emoji picker coming soon"
+                        aria-disabled="true"
+                        className="h-10 w-10 shrink-0 rounded-full border border-border/80 flex items-center justify-center text-muted-foreground hover:bg-muted/40 aria-disabled:cursor-not-allowed"
                       >
-                        <Smile className="h-4 w-4" />
+                        <Smile className="h-4 w-4" aria-hidden="true" />
                       </button>
                       <button
                         type="button"
-                        className="h-10 w-10 shrink-0 rounded-full border border-border/80 flex items-center justify-center text-muted-foreground hover:bg-muted/40"
+                        aria-label="Attach file (coming soon)"
+                        title="Attachments coming soon"
+                        aria-disabled="true"
+                        className="h-10 w-10 shrink-0 rounded-full border border-border/80 flex items-center justify-center text-muted-foreground hover:bg-muted/40 aria-disabled:cursor-not-allowed"
                       >
-                        <Paperclip className="h-4 w-4" />
+                        <Paperclip className="h-4 w-4" aria-hidden="true" />
                       </button>
 
+                      <label htmlFor="message-composer" className="sr-only">
+                        Message {selectedChat.name}
+                      </label>
                       <textarea
+                        id="message-composer"
                         ref={composerInputRef}
                         value={inputMessage}
                         onChange={handleComposerChange}
                         onKeyDown={handleComposerKeyDown}
                         rows={1}
-                        placeholder="Type a message (Ctrl+Enter to send)"
-                        title="Type a message (Ctrl+Enter to send)"
-                        className="flex-1 min-h-10 max-h-32 resize-none rounded-2xl border border-border/80 bg-background px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                        placeholder="Type a message (Enter to send)"
+                        title="Type a message (Enter to send, Shift+Enter for a new line)"
+                        aria-describedby={composerDescribedBy}
+                        aria-invalid={isMessageTooLong || Boolean(sendError) || undefined}
+                        aria-keyshortcuts="Enter"
+                        className={cn(
+                          "flex-1 min-h-10 max-h-32 resize-none rounded-2xl border bg-background px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30",
+                          isMessageTooLong || sendError
+                            ? "border-destructive"
+                            : "border-muted-foreground/50",
+                        )}
                       />
 
                       <button
-                        type="button"
-                        onClick={() => void handleSendMessage()}
-                        disabled={!inputMessage.trim() || isSending}
+                        type="submit"
+                        disabled={!inputMessage.trim() || isSending || isMessageTooLong}
+                        aria-label={isSending ? "Sending message" : "Send message"}
                         className="h-10 w-10 shrink-0 rounded-full bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-50"
                       >
                         {isSending ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                         ) : (
-                          <SendHorizontal className="h-4 w-4" />
+                          <SendHorizontal className="h-4 w-4" aria-hidden="true" />
                         )}
                       </button>
                     </div>
-                  </div>
+
+                    <div className="px-4 pb-2 -mt-2 flex items-start justify-between gap-3 text-[11px]">
+                      <p id="composer-hint" className="sr-only">
+                        Press Enter to send. Press Shift and Enter for a new line.
+                        {replyingToMessage ? " Press Escape to cancel the reply." : ""}
+                      </p>
+                      {/* Errors are announced assertively and also shown
+                          with an icon + text, not colour alone. */}
+                      <p
+                        id="composer-error"
+                        role="alert"
+                        className="flex items-center gap-1 text-destructive font-medium empty:hidden"
+                      >
+                        {(sendError || isMessageTooLong) && (
+                          <>
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                            {sendError ??
+                              `Message is too long by ${inputMessage.length - MAX_MESSAGE_LENGTH} characters. Messages can be at most ${MAX_MESSAGE_LENGTH} characters.`}
+                          </>
+                        )}
+                      </p>
+                      {inputMessage.length > MESSAGE_LENGTH_WARNING_THRESHOLD && (
+                        <p
+                          id="composer-char-count"
+                          className={cn(
+                            "ml-auto tabular-nums",
+                            isMessageTooLong ? "text-destructive font-medium" : "text-muted-foreground",
+                          )}
+                        >
+                          {inputMessage.length} / {MAX_MESSAGE_LENGTH}
+                          <span className="sr-only"> characters</span>
+                        </p>
+                      )}
+                    </div>
+                  </form>
 
                   <RoomMembersDialog
                     roomId={selectedChat.id}
                     open={roomMembersOpen}
                     onOpenChange={setRoomMembersOpen}
+                  />
+                  <ForwardMessageDialog
+                    messageId={forwardMessageId}
+                    onOpenChange={(open) => {
+                      if (!open) setForwardMessageId(null);
+                    }}
+                    onForwarded={handleMessageForwarded}
                   />
                   <GroupAuditDialog
                     groupId={selectedChat.id}
@@ -1380,7 +1816,9 @@ function ChatPageInner() {
           </div>
         </div>
 
-        <nav className="md:hidden fixed inset-x-3 bottom-3 z-30 rounded-2xl border border-border/70 bg-card/95 backdrop-blur shadow-lg pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        <nav
+          aria-label="Chat views"
+          className="md:hidden fixed inset-x-3 bottom-3 z-30 rounded-2xl border border-border/70 bg-card/95 backdrop-blur shadow-lg pb-[max(0.5rem,env(safe-area-inset-bottom))]">
           <div className="grid grid-cols-2 gap-1 p-1.5">
             <button
               type="button"
@@ -1388,6 +1826,8 @@ function ChatPageInner() {
                 setActiveMobileTab("chats");
                 setMobileSidebarOpen(false);
               }}
+              aria-current={activeMobileTab === "chats" ? "page" : undefined}
+              aria-controls="chat-sidebar"
               className={cn(
                 "min-h-12 rounded-xl inline-flex items-center justify-center gap-2 text-sm font-medium transition-colors",
                 activeMobileTab === "chats"
@@ -1395,7 +1835,7 @@ function ChatPageInner() {
                   : "text-muted-foreground hover:bg-muted/40",
               )}
             >
-              <PanelLeft className="h-4 w-4" /> Groups
+              <PanelLeft className="h-4 w-4" aria-hidden="true" /> Groups
             </button>
             <button
               type="button"
@@ -1403,6 +1843,7 @@ function ChatPageInner() {
                 setActiveMobileTab("conversation");
                 setMobileSidebarOpen(false);
               }}
+              aria-current={activeMobileTab === "conversation" ? "page" : undefined}
               className={cn(
                 "min-h-12 rounded-xl inline-flex items-center justify-center gap-2 text-sm font-medium transition-colors",
                 activeMobileTab === "conversation"
@@ -1410,7 +1851,7 @@ function ChatPageInner() {
                   : "text-muted-foreground hover:bg-muted/40",
               )}
             >
-              <MessageSquare className="h-4 w-4" /> Chat
+              <MessageSquare className="h-4 w-4" aria-hidden="true" /> Chat
             </button>
           </div>
         </nav>
@@ -1428,8 +1869,9 @@ export default function ChatPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center text-muted-foreground">
-          <Loader2 className="h-6 w-6 animate-spin" />
+        <div role="status" className="min-h-screen flex items-center justify-center text-muted-foreground">
+          <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
+          <span className="sr-only">Loading chat…</span>
         </div>
       }
     >
