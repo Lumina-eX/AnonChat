@@ -7,6 +7,7 @@ import {
   resolveWalletMessageRatePolicy,
 } from "@/lib/wallet-message-rate-limit"
 import { getRoomTTL } from "@/lib/ephemeral-cleanup"
+import { applyActiveMessageFilters } from "@/lib/message-retention"
 import { type NextRequest, NextResponse } from "next/server"
 import { validateMessage, ValidationErrorType } from "@/lib/middleware/message-validation"
 import { insertMessageIdempotent } from "@/lib/messages/idempotency"
@@ -50,10 +51,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden. You have been removed from this room." }, { status: 403 })
     }
 
-    const { data, error } = await supabase
+    const now = new Date().toISOString()
+    const { data, error } = await applyActiveMessageFilters(
+      supabase
       .from("messages")
       .select("*, profiles(display_name, avatar_url)")
-      .eq("room_id", roomId)
+      .eq("room_id", roomId),
+      now,
+    )
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1)
 
@@ -102,6 +107,8 @@ export async function PATCH(request: NextRequest) {
       .from("messages")
       .update({ status })
       .eq("id", id)
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      .or(`retention_expires_at.is.null,retention_expires_at.gt.${new Date().toISOString()}`)
       .select()
 
     if (error) throw error
@@ -159,6 +166,8 @@ export async function PUT(request: NextRequest) {
       .from("messages")
       .select("id, user_id, created_at")
       .eq("id", id)
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      .or(`retention_expires_at.is.null,retention_expires_at.gt.${new Date().toISOString()}`)
       .maybeSingle()
 
     if (fetchErr) throw fetchErr
@@ -328,6 +337,19 @@ export async function POST(request: NextRequest) {
       const ttl = await getRoomTTL(room_id)
       messageData.is_ephemeral = true
       messageData.expires_at = new Date(Date.now() + ttl * 1000).toISOString()
+    }
+
+    const { data: retentionPolicy, error: retentionPolicyError } = await supabase
+      .from("message_retention_policies")
+      .select("enabled, retention_seconds")
+      .eq("room_id", room_id)
+      .maybeSingle()
+
+    if (retentionPolicyError) throw retentionPolicyError
+    if (retentionPolicy?.enabled) {
+      messageData.retention_expires_at = new Date(
+        Date.now() + retentionPolicy.retention_seconds * 1000,
+      ).toISOString()
     }
 
     // Attach idempotency key when the client provided one

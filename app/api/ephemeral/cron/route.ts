@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { cleanupExpiredMessages } from "@/lib/ephemeral-cleanup";
+import { cleanupExpiredRetentionMessages } from "@/lib/message-retention";
 
-// Vercel Cron Route for ephemeral message cleanup
+// Vercel Cron Route for ephemeral and group-retention message cleanup.
 // Configure in vercel.json:
 // {
 //   "crons": [{
 //     "path": "/api/ephemeral/cron",
-//     "schedule": "0 */6 * * *"  // Every 6 hours
+//     "schedule": "*/15 * * * *"  // Every 15 minutes
 //   }]
 // }
 export async function GET(request: NextRequest) {
@@ -31,13 +32,15 @@ export async function GET(request: NextRequest) {
     logger.info("Vercel cron: Starting ephemeral message cleanup");
 
     const result = await cleanupExpiredMessages();
+    const retentionResult = await cleanupExpiredRetentionMessages();
 
-    logger.info("Vercel cron: Cleanup completed", { result });
+    logger.info("Vercel cron: Cleanup completed", { result, retentionResult });
 
     return NextResponse.json({
       success: true,
       message: "Ephemeral message cleanup completed",
       result,
+      retentionResult,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

@@ -30,6 +30,8 @@ export async function POST(
       .from("messages")
       .select("id, room_id")
       .eq("id", messageId)
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      .or(`retention_expires_at.is.null,retention_expires_at.gt.${new Date().toISOString()}`)
       .single()
 
     if (messageError || !message) {
@@ -121,6 +123,8 @@ export async function GET(
       .from("messages")
       .select("id, room_id, user_id")
       .eq("id", messageId)
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      .or(`retention_expires_at.is.null,retention_expires_at.gt.${new Date().toISOString()}`)
       .single()
 
     if (messageError || !message) {

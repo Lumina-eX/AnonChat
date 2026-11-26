@@ -53,6 +53,7 @@ If the project uses Supabase, maintainers can run the same `psql` commands again
 - `scripts/012_group_audit_events.sql` creates `public.group_audit_events`, which maps group audit events to Stellar transaction hashes and exposes the audit trail to authenticated users who can access the group.
 - `scripts/015_stellar_transaction_verifications.sql` creates `public.stellar_transaction_verifications`, which stores successful, failed, pending, and invalid Stellar transaction checks before associated group actions are persisted.
 - `scripts/022_transaction_receipts.sql` creates canonical, hash-unique transaction receipts and append-only lifecycle events for operation-level lookup and auditability.
+- `scripts/024_message_retention.sql` adds group retention policy settings and history, creation-time message expiry, retry tracking, and atomic cleanup functions. It requires the Supabase `service_role` for scheduled cleanup operations.
 - A development-only endpoint (`/api/rooms/seed-test`) was added that seeds a room for an authenticated user. It requires a valid Supabase session; do not enable any service-role or unauthenticated behavior in production without review.
 
 ## Including migrations in PRs

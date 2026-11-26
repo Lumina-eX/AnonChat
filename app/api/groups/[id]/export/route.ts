@@ -79,6 +79,7 @@ export async function GET(
 
     const encoder = new TextEncoder();
     const BATCH_SIZE = 1000;
+    const activeAt = new Date().toISOString();
 
     // 4. Create readable stream for efficient memory scaling with large history
     const stream = new ReadableStream({
@@ -97,6 +98,8 @@ export async function GET(
               .from("messages")
               .select("*, profiles(display_name)")
               .eq("room_id", groupId)
+              .or(`expires_at.is.null,expires_at.gt.${activeAt}`)
+              .or(`retention_expires_at.is.null,retention_expires_at.gt.${activeAt}`)
               .order("created_at", { ascending: true })
               .range(offset, offset + BATCH_SIZE - 1);
 
