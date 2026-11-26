@@ -1,7 +1,10 @@
 export type NotificationType =
   | "group_added"
   | "ownership_transferred"
-  | "member_removed";
+  | "member_removed"
+  | "group_join_requested"
+  | "group_join_request_approved"
+  | "group_join_request_rejected";
 
 export type NotificationDeliveryStatus = "pending" | "delivered" | "failed";
 

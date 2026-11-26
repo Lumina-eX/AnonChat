@@ -7,6 +7,14 @@ const EVENT_TYPES = new Set([
   "member_joined",
   "member_left",
   "member_removed",
+  "role_assigned",
+  "role_revoked",
+  "wallet_verified",
+  "wallet_verification_failed",
+  "join_request_created",
+  "join_request_approved",
+  "join_request_rejected",
+  "join_request_cancelled",
 ])
 
 const STATUSES = new Set(["pending", "submitted", "failed"])

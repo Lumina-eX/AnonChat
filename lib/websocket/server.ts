@@ -3,6 +3,7 @@ import http from "http"
 import { randomUUID } from "crypto"
 import { validateMessage, ValidationErrorType } from "../middleware/message-validation"
 import { isValidUUID, getIdempotencyMetrics } from "../messages/idempotency"
+import { validateSession } from "../auth/session-store"
 
 // Type definitions
 interface User {
@@ -337,7 +338,7 @@ export function createWebSocketServer(port: number = 3001) {
     // Setup heartbeat for this connection
     setupHeartbeat(clientId)
 
-    ws.on("message", (data: WebSocket.RawData) => {
+    ws.on("message", async (data: WebSocket.RawData) => {
       try {
         const message = JSON.parse(data.toString())
         console.log(`[WebSocket] Message from ${clientId}:`, message.type)
@@ -345,10 +346,47 @@ export function createWebSocketServer(port: number = 3001) {
         switch (message.type) {
           case "auth": {
             // Authenticate user
+            const sessionId = message.payload.sessionId
+            let authenticatedWallet = message.payload.walletAddress
+
+            // When a session id is supplied, bind the connection to the
+            // wallet recorded by the verified application session instead of
+            // trusting a client-provided address.
+            if (typeof sessionId === "string" && sessionId.length > 0) {
+              const session = await validateSession(sessionId)
+              if (!session) {
+                ws.send(
+                  JSON.stringify({
+                    type: "error",
+                    payload: { message: "Invalid or expired session" },
+                    timestamp: Date.now(),
+                  }),
+                )
+                break
+              }
+
+              const claimedWallet =
+                typeof message.payload.walletAddress === "string"
+                  ? message.payload.walletAddress.toLowerCase()
+                  : null
+              if (claimedWallet && claimedWallet !== session.walletAddress) {
+                ws.send(
+                  JSON.stringify({
+                    type: "error",
+                    payload: { message: "Session wallet mismatch" },
+                    timestamp: Date.now(),
+                  }),
+                )
+                break
+              }
+
+              authenticatedWallet = session.walletAddress
+            }
+
             connection.userId = message.payload.userId
             connection.user = {
               id: message.payload.userId,
-              walletAddress: message.payload.walletAddress,
+              walletAddress: authenticatedWallet,
               displayName: message.payload.displayName,
               avatarUrl: message.payload.avatarUrl,
             }

@@ -59,7 +59,13 @@ export async function GET(request: NextRequest) {
 
     if (error) throw error
 
-    return NextResponse.json({ messages: data })
+    // Never expose the link to a forwarded message's source: it belongs to a
+    // group the destination's members may not have access to.
+    const messages = (data || []).map(
+      ({ forwarded_from_message_id: _source, ...message }: Record<string, unknown>) => message,
+    )
+
+    return NextResponse.json({ messages })
   } catch (error) {
     console.error("[v0] GET /api/messages error:", error)
     return NextResponse.json({ error: "Failed to fetch messages" }, { status: 500 })

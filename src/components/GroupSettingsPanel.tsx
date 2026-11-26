@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Copy, LogOut, X, Users } from 'lucide-react';
+import { LogOut, X, Users } from 'lucide-react';
+import { InviteMembersDialog } from '@/components/invite-members-dialog';
 
 interface GroupSettingsPanelProps {
   isOpen: boolean;
@@ -12,23 +13,12 @@ export const GroupSettingsPanel: React.FC<GroupSettingsPanelProps> = ({
   onClose,
   roomName
 }) => {
-  const [copied, setCopied] = useState(false);
   const [showConfirmLeave, setShowConfirmLeave] = useState(false);
 
   // Mock data for presentation purposes
   const inviteCode = "ANON-CHAT-99XF";
   const memberCount = 14;
   const description = "A private, decentralized room for secure group discussions.";
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(inviteCode);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000); // Reset text after 2 seconds
-    } catch (err) {
-      console.error('Failed to copy link:', err);
-    }
-  };
 
   const handleLeaveGroup = () => {
     alert("Successfully left the group!"); // Placeholder for actual leave logic
@@ -76,25 +66,19 @@ export const GroupSettingsPanel: React.FC<GroupSettingsPanelProps> = ({
             </p>
           </div>
 
-          {/* 2. Copy Invite Code Section */}
+          {/* 2. Invite Members Section */}
           <div className="mt-4 bg-gray-950 p-4 rounded-xl border border-gray-800/60">
             <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider block mb-2">
-              Invite Code
+              Invitations
             </label>
-            <div className="flex items-center justify-between bg-gray-900 px-3 py-2 rounded-lg border border-gray-800">
-              <span className="font-mono text-sm tracking-widest text-gray-200">{inviteCode}</span>
-              <button
-                onClick={handleCopy}
-                className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md transition-all ${
-                  copied 
-                    ? 'bg-green-600 text-white' 
-                    : 'bg-purple-600 hover:bg-purple-700 text-white shadow-sm'
-                }`}
-              >
-                <Copy className="size-3.5" />
-                {copied ? 'Copied!' : 'Copy'}
-              </button>
-            </div>
+            <p className="text-xs text-gray-400 mb-3">
+              Share a code so others can join this group.
+            </p>
+            <InviteMembersDialog
+              inviteCode={inviteCode}
+              groupName={roomName}
+              triggerClassName="w-full justify-center bg-purple-600 border-purple-600 text-white hover:bg-purple-700 hover:text-white py-2.5 rounded-xl"
+            />
           </div>
         </div>
 
