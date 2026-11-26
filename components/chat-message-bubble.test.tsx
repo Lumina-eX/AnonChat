@@ -22,6 +22,39 @@ describe("ChatMessageBubble Component", () => {
     expect(screen.getByText("12:00")).toBeDefined();
   });
 
+  it("shows an accessible selection control and selected visual state", () => {
+    const onToggleSelection = vi.fn();
+    const { rerender } = render(
+      <ChatMessageBubble
+        message={baseMessage}
+        isSelectionMode
+        onToggleSelection={onToggleSelection}
+      />,
+    );
+
+    const checkbox = screen.getByRole("checkbox", {
+      name: "Select message from you",
+    });
+    expect(checkbox.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(checkbox);
+    expect(onToggleSelection).toHaveBeenCalledWith(baseMessage.id);
+
+    rerender(
+      <ChatMessageBubble
+        message={baseMessage}
+        isSelectionMode
+        isSelected
+        onToggleSelection={onToggleSelection}
+      />,
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "Deselect message from you" }).getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(screen.getByText(baseMessage.text).parentElement?.className).toContain(
+      "ring-2",
+    );
+  });
+
   it("renders reply action button and triggers onReply when clicked", () => {
     const onReply = vi.fn();
     render(<ChatMessageBubble message={baseMessage} onReply={onReply} />);

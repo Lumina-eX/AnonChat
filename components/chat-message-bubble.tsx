@@ -100,6 +100,24 @@ export function ChatMessageBubble({
         isMe ? "items-end ml-auto" : "items-start mr-auto"
       )}
     >
+      {isSelectionMode && (
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={isSelected}
+          aria-label={`${isSelected ? "Deselect" : "Select"} message from ${isMe ? "you" : message.senderName || "another user"}`}
+          onClick={() => onToggleSelection?.(message.id)}
+          className={cn(
+            "absolute top-1 flex h-6 w-6 items-center justify-center rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+            isMe ? "right-0" : "left-0",
+            isSelected
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-muted-foreground/50 bg-background text-transparent hover:border-primary",
+          )}
+        >
+          <Check className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      )}
       {/* Message Actions (Hover / Focus effect) */}
       <div
         role="toolbar"
@@ -159,7 +177,8 @@ export function ChatMessageBubble({
             ? "bg-primary text-primary-foreground rounded-br-sm"
             : "bg-card border border-border/70 rounded-bl-sm",
           isHighlighted && "ring-2 ring-primary bg-primary/20 scale-[1.02]",
-          isPinned && "border-primary/50 shadow-md"
+          isPinned && "border-primary/50 shadow-md",
+          isSelected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
         )}
       >
         <span id={`msg-${message.id}-sender`} className="sr-only">
